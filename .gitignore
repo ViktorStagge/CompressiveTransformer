@@ -1,0 +1,13 @@
+
+# input & output data. keep folder
+data/
+!data/.gitignore
+
+
+# Jupyter Notebooks
+**/.ipynb_checkpoints/
+
+
+# Pycharm Folder
+**/.idea/
+**/__pycache__/
