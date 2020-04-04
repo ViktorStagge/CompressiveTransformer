@@ -54,8 +54,12 @@ class ScaledDotProductAttention(Layer):
     def call(self, x):
         assert isinstance(x, list)
         q, k, v = x
-        assert k.shape[0] == self.d_k and q.shape[0] == self.d_k and v.shape[0] == self.d_v, \
-            'unexpected input shape received '  # (embedding_size, d_model)
+        assert q.shape[0] == self.d_k and q.shape[1] == self.d_model, \
+            f'unexpected input shape received for `Q: Query`: {q.shape}'  # (embedding_size, d_model)
+        assert k.shape[0] == self.d_k and k.shape[1] == self.d_model, \
+            f'unexpected input shape received for `K: Key`: {k.shape}'  # (embedding_size, d_model)
+        assert v.shape[0] == self.d_v and v.shape[1] == self.d_model, \
+            f'unexpected input shape received for `V: Value`: {v.shape}'  # (embedding_size, d_model)
 
         q = K.dot(q, self.w_q)
         k = K.dot(k, self.w_k)
@@ -72,6 +76,8 @@ class ScaledDotProductAttention(Layer):
         assert isinstance(input_shape, list)
         shape_q, shape_k, shape_v = input_shape
 
+        assert len(shape_v) == 2, f'receiving batch_size as well (?): {shape_v}'
+
         return self.d_model, self.d_v
 
 
@@ -82,7 +88,7 @@ class MultiheadAttention(Layer):
         self.d_v = d_v or _default['d_v']
         self.d_model = d_model or _default['d_model']
 
-        self.heads = [ScaledDotProductAttention(d_k=self.d_k, d_v=self.d_v, d_model=self.d_model) for _ in range(self.d_heads)]
+        # self.heads = [ScaledDotProductAttention(d_k=self.d_k, d_v=self.d_v, d_model=self.d_model) for _ in range(self.d_heads)]
         self.w_o = None
 
         super().__init__(**kwargs)
@@ -90,14 +96,10 @@ class MultiheadAttention(Layer):
     def build(self, input_shape):
         assert isinstance(input_shape, list), \
             f'received input_shape of type `{type(input_shape)}`, expected: `list`'
-        shape_q, shape_k, shape_v = input_shape
-        assert shape_q == (self.d_model, self.d_k) and \
-               shape_k == (self.d_model, self.d_k) and \
-               shape_v == (self.d_model, self.d_v), \
-            f'unexpected input shapes received for: {input_shape}, expected:\n' \
-            f'd_model= {self.d_model}\n' \
-            f'd_k=d_q= {self.d_k}\n' \
-            f'd_v    = {self.d_v}'
+        assert len(input_shape) == self.d_heads, \
+            f'unexpected input length. Expected {self.d_heads}. Received {len(input_shape)}'
+        assert all(shape == input_shape[0] for shape in input_shape), \
+            f'received input tensors of varying shapes'
 
         self.w_o = self.add_weight(name='w_o',
                                    shape=(self.d_heads*self.d_v, self.d_model),
@@ -107,18 +109,25 @@ class MultiheadAttention(Layer):
         super().build(input_shape)
 
     def call(self, x, **kwargs):
-        pass
+        assert isinstance(x, list)
+
+        z = K.concatenate(tensors=x)
+        y = K.dot(z, self.w_o)
+        return y
 
     def compute_output_shape(self, input_shape):
         assert isinstance(input_shape, list)
-        shape_q, shape_k, shape_v = input_shape
+        # shape_q, shape_k, shape_v = input_shape
 
-        assert len(shape_v) == 2, f'receiving batch_size as well (?): {shape_v}'
+        # return self.shape_q[0], self.d_model  # ([batch_size, ]shape_q[0], d_model
+        shape = input_shape[-1]
 
-        return self.shape_v[0], self.d_model
+        return shape[0], self.d_v
 
 
 class ContentBasedAttention(Layer):
+    """Content Based Attention as defined in "Neural Turing Machines" by Graves et. al.
+    """
     def __init__(self, weight_layer=None, **kwargs):
         self.weight_layer = weight_layer
         super().__init__(**kwargs)
@@ -136,7 +145,8 @@ class ContentBasedAttention(Layer):
             x2 = K.dot(x2, self.weight_layer.K)
             x3 = K.dot(x2, self.weight_layer.V)
 
-        y = cosine_similarity(x1, x2)
+        z = cosine_similarity(x1, x2)
+        y = K.softmax(z)
 
         if self.weight_layer is not None:
             y = K.dot(y, x3)
@@ -144,4 +154,43 @@ class ContentBasedAttention(Layer):
         return y
 
     def compute_output_shape(self, input_shape):
-        pass
+        return input_shape[:-1], None
+
+
+class ContentBasedAttention_CT(Layer):
+    """Content Based Attention as defined in the Compressive Transformer paper.
+    def attn(h, m) <- sigma((hQ)(mK))(mV)  # most likely softmax(•)
+    """
+    def __init__(self, weight_layer=None, **kwargs):
+        self.weight_layer = weight_layer
+        super().__init__(**kwargs)
+
+    def build(self, input_shape):
+        super().build(input_shape)
+
+    def call(self, x, **kwargs):
+        assert isinstance(x, list), \
+            'expected to receive 2 tensors as input. Multiple inputs are not specified'
+        assert len(x) == 2, \
+            f'expected to receive 2 tensors as input. Received {len(x)}'
+        assert self.weight_layer is not None
+        h, m = x
+
+        hQ = K.dot(h, self.weight_layer.Q)
+        mK = K.dot(m, self.weight_layer.K)
+        mV = K.dot(m, self.weight_layer.V)
+
+        z = K.dot(hQ, mK)
+        z = K.softmax(z)
+        y = K.dot(z, mV)
+
+        return y
+
+    def compute_output_shape(self, input_shape):
+        assert len(input_shape) == 2, \
+            'expected to receive 2 tensors as input. Multiple inputs are not specified'
+        assert len(input_shape) == 2, \
+            f'expected to receive 2 tensors as input. Received {len(input_shape)}'
+        shape_h, shape_m = input_shape
+
+        return shape_h[0], shape_m[1]
