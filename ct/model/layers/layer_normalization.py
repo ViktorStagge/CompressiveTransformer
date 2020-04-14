@@ -12,10 +12,10 @@ class LayerNormalization(Layer):
         super().__init__(**kwargs)
 
     def build(self, input_shape):
-        assert len(input_shape) == 1, \
+        assert isinstance(input_shape, tuple) and len(input_shape) == 2, \
             f'received input_shape={input_shape}. Only 1-dim input_shape is supported.'
-        assert self.units == input_shape[0], \
-            f'received input_shape={input_shape}. Expected input_shape={self.units.shape}'
+        assert input_shape == (None, self.units), \
+            f'received input_shape={input_shape}. Expected input_shape=(None, {self.units})'
 
         super().build(input_shape)
 

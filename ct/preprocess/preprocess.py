@@ -5,6 +5,9 @@ from keras.preprocessing.text import Tokenizer
 from tokenizers import ByteLevelBPETokenizer
 
 
+separator_samples = '############<new_sample>############'
+
+
 def preprocess(dataset,
                text_column='text',
                max_vocab=None,

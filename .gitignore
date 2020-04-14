@@ -2,6 +2,7 @@
 # input & output data. keep folder
 data/*
 !data/.gitignore
+!data/README.md
 
 
 # Jupyter Notebooks
