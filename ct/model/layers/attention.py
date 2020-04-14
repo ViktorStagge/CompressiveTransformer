@@ -15,7 +15,7 @@ _default = dict(d_k=64,
 
 class ScaledDotProductAttention(Layer):
     def __init__(self, d_k=None, d_v=None, d_model=None, **kwargs):
-        print('#### INIT ####')
+        print(f'#### INIT {self.__class__} ####')
         self.d_k = d_k or _default['d_k']
         self.d_v = d_v or _default['d_v']
         self.d_model = d_model or _default['d_model']
@@ -24,16 +24,12 @@ class ScaledDotProductAttention(Layer):
         self.w_v = None
 
         self.d_q = self.d_k
-        self._call_count = 0
 
         super().__init__(**kwargs)
 
     def build(self, input_shape):
-        print('#### BUILD ####')
-        print(input_shape)
-        # assert isinstance(input_shape, (list, tuple)), \
-        #     f'received input_shape of type `{type(input_shape)}`, expected: `list` or `tuple`'
-
+        print(f'#### BUILD {self.__class__} ####')
+        # print(input_shape)
         if isinstance(input_shape, list):
             assert len(input_shape) in (2, 3), \
                 f'received input_shape of length `{len(input_shape)}`, expected length in (2, 3)'
@@ -48,12 +44,13 @@ class ScaledDotProductAttention(Layer):
             shape_k = input_shape
             shape_v = input_shape
 
-        # assert shape_q == (None, self.d_model, self.d_k) and \
-        #        shape_k == (None, self.d_model, self.d_k) and \
-        #        shape_v == (None, self.d_model, self.d_v), \
         assert shape_q == (None, None, self.d_model) and \
                shape_k == (None, None, self.d_model) and \
-               shape_v == (None, None, self.d_v), \
+               shape_v == (None, None, self.d_v) \
+               or \
+               shape_q == (None, self.d_model, self.d_model) and \
+               shape_k == (None, self.d_model, self.d_model) and \
+               shape_v == (None, self.d_model, self.d_v), \
             f'unexpected input shapes received for: {input_shape}, expected:\n' \
             f'd_model= {self.d_model}\n' \
             f'd_k=d_q= {self.d_k}\n' \
@@ -71,12 +68,10 @@ class ScaledDotProductAttention(Layer):
                                    shape=(self.d_model, self.d_v),
                                    initializer='uniform',
                                    trainable=True)
-
         super().build(input_shape)
 
     def call(self, x):
-        print('#### CALL ####')
-        print(x)
+        print(f'#### CALL {self.__class__} ####')
         if isinstance(x, list):
             if len(x) == 3:
                 q, k, v = x
@@ -88,12 +83,15 @@ class ScaledDotProductAttention(Layer):
             k = x
             v = x
 
-        assert [dim.value for dim in q.shape.dims] == [None, None, self.d_model], \
+        assert [dim.value for dim in q.shape.dims] == [None, None, self.d_model] \
+            or [dim.value for dim in q.shape.dims] == [None, self.d_model, self.d_model], \
             f'unexpected input shape received for `Q: Query`: {q.shape}'  # (embedding_size, d_model)
                                                                           # or (None, self.d_model, self.d_k)
-        assert [dim.value for dim in k.shape.dims] == [None, None, self.d_model], \
+        assert [dim.value for dim in k.shape.dims] == [None, None, self.d_model]\
+            or [dim.value for dim in k.shape.dims] == [None, self.d_model, self.d_model], \
             f'unexpected input shape received for `K: Key`: {k.shape}'  # (embedding_size, d_model)
-        assert [dim.value for dim in v.shape.dims] == [None, None, self.d_v], \
+        assert [dim.value for dim in v.shape.dims] == [None, None, self.d_v]\
+            or [dim.value for dim in v.shape.dims] == [None, self.d_model, self.d_v], \
             f'unexpected input shape received for `V: Value`: {v.shape}'  # (embedding_size, d_model)
 
         q = K.dot(q, self.w_q)
@@ -111,11 +109,6 @@ class ScaledDotProductAttention(Layer):
               f'    v={v.shape}\n'
               f'    k_T={k_T.shape}\n'
               f'    y={y.shape}')
-        print(y)
-
-        if self._call_count > 0:
-            raise
-        self._call_count += 1
 
         return y
 
@@ -131,7 +124,7 @@ class ScaledDotProductAttention(Layer):
         return None, self.d_model, self.d_v
 
 
-class MultiheadAttention(Layer):
+class MultiHeadAttention(Layer):
     def __init__(self, d_heads=None, d_k=None, d_v=None, d_model=None, **kwargs):
         self.d_heads = d_heads or _default['d_heads']
         self.d_k = d_k or _default['d_k']
@@ -226,9 +219,9 @@ class ContentBasedAttention_CT(Layer):
         mK = K.dot(m, self.weight_layer.K)
         mV = K.dot(m, self.weight_layer.V)
 
-        z = K.dot(hQ, mK)
+        z = K.batch_dot(hQ, mK)
         z = K.softmax(z)
-        y = K.dot(z, mV)
+        y = K.batch_dot(z, mV)
 
         return y
 
@@ -239,4 +232,4 @@ class ContentBasedAttention_CT(Layer):
             f'expected to receive 2 tensors as input. Received {len(input_shape)}'
         shape_h, shape_m = input_shape
 
-        return None, shape_h[1], shape_m[2]
+        return None, shape_h[1], self.weight_layer.V.shape[1]

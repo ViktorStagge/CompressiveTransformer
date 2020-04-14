@@ -1,5 +1,5 @@
 from model.layers.attention import ContentBasedAttention, \
                                    ContentBasedAttention_CT, \
                                    ScaledDotProductAttention, \
-                                   MultiheadAttention
+                                   MultiHeadAttention
 from model.layers.layer_normalization import LayerNormalization
