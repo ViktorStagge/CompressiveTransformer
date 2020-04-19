@@ -1,3 +1,5 @@
+import numpy as np
+
 from keras import layers
 from keras import backend as K
 from keras.layers import Layer
