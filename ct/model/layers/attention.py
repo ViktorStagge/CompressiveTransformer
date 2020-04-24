@@ -15,7 +15,7 @@ _default = dict(d_k=64,
 
 class ScaledDotProductAttention(Layer):
     def __init__(self, d_k=None, d_v=None, d_model=None, **kwargs):
-        print(f'#### INIT [{self.__class__.__name__}] ####')
+        # print(f'#### INIT [{self.__class__.__name__}] ####')
         self.d_k = d_k or _default['d_k']
         self.d_v = d_v or _default['d_v']
         self.d_model = d_model or _default['d_model']
@@ -28,7 +28,7 @@ class ScaledDotProductAttention(Layer):
         super().__init__(**kwargs)
 
     def build(self, input_shape):
-        print(f'#### BUILD [{self.__class__.__name__}] ####')
+        # print(f'#### BUILD [{self.__class__.__name__}] ####')
         # print(input_shape)
         if isinstance(input_shape, list):
             assert len(input_shape) in (2, 3), \
@@ -44,17 +44,17 @@ class ScaledDotProductAttention(Layer):
             shape_k = input_shape
             shape_v = input_shape
 
-        assert shape_q == (None, None, self.d_model) and \
-               shape_k == (None, None, self.d_model) and \
-               shape_v == (None, None, self.d_model) \
-               or \
-               shape_q == (None, self.d_model, self.d_model) and \
-               shape_k == (None, self.d_model, self.d_model) and \
-               shape_v == (None, self.d_model, self.d_model), \
-            f'unexpected input shapes received for: {input_shape}, expected:\n' \
-            f'd_model= {self.d_model}\n' \
-            f'd_k=d_q= {self.d_k}\n' \
-            f'd_v    = {self.d_v}'
+        # assert shape_q == (None, None, self.d_model) and \
+        #        shape_k == (None, None, self.d_model) and \
+        #        shape_v == (None, None, self.d_model) \
+        #        or \
+        #        shape_q == (None, self.d_model, self.d_model) and \
+        #        shape_k == (None, self.d_model, self.d_model) and \
+        #        shape_v == (None, self.d_model, self.d_model), \
+        #     f'unexpected input shapes received for: {input_shape}, expected:\n' \
+        #     f'd_model= {self.d_model}\n' \
+        #     f'd_k=d_q= {self.d_k}\n' \
+        #     f'd_v    = {self.d_v}'
 
         self.w_q = self.add_weight(name='w_q',
                                    shape=(self.d_model, self.d_q),
@@ -71,43 +71,68 @@ class ScaledDotProductAttention(Layer):
         super().build(input_shape)
 
     def call(self, x):
-        print(f'#### CALL [{self.__class__.__name__}] ####')
+        # print(f'#### CALL [{self.__class__.__name__}] ####')
         if isinstance(x, list):
             if len(x) == 3:
                 q, k, v = x
             elif len(x) == 2:
                 q, k = x
                 v = k
+            else:
+                raise NotImplementedError('ScaledDotProductAttention is not implemented for 3D-input or above')
         else:
             q = x
             k = x
             v = x
+        #
+        # if len(k.shape) == 1:
+        #     k = K.tile(k, 32)
+        #     k = K.reshape(k, shape=(32, -1))
+        #     k_T = k
+        # elif len(k.shape) == 2:
+        #     print(k.shape)
+        #     raise NotImplementedError('expected ')
+        if len(k.shape) == 3:
+            k_T = K.permute_dimensions(k, pattern=(0, 2, 1))
+        else:
+            raise NotImplementedError('expected 3 dimensions')
+        # if len(v.shape) == 1:
+        #     v = K.tile(v, 32)
+        #     v = K.reshape(v, shape=(32, -1))
 
-        assert [dim.value for dim in q.shape.dims] == [None, None, self.d_model] \
-            or [dim.value for dim in q.shape.dims] == [None, self.d_model, self.d_model], \
-            f'unexpected input shape received for `Q: Query`: {q.shape}'
-        assert [dim.value for dim in k.shape.dims] == [None, None, self.d_model]\
-            or [dim.value for dim in k.shape.dims] == [None, self.d_model, self.d_model], \
-            f'unexpected input shape received for `K: Key`: {k.shape}'
-        assert [dim.value for dim in v.shape.dims] == [None, None, self.d_model]\
-            or [dim.value for dim in v.shape.dims] == [None, self.d_model, self.d_model], \
-            f'unexpected input shape received for `V: Value`: {v.shape}'
 
-        q = K.dot(q, self.w_q)
+        # assert [dim.value for dim in q.shape.dims] == [None, None, self.d_model] \
+        #     or [dim.value for dim in q.shape.dims] == [None, self.d_model, self.d_model], \
+        #     f'unexpected input shape received for `Q: Query`: {q.shape}'
+        # assert [dim.value for dim in k.shape.dims] == [None, None, self.d_model]\
+        #     or [dim.value for dim in k.shape.dims] == [None, self.d_model, self.d_model], \
+        #     f'unexpected input shape received for `K: Key`: {k.shape}'
+        # assert [dim.value for dim in v.shape.dims] == [None, None, self.d_model]\
+        #     or [dim.value for dim in v.shape.dims] == [None, self.d_model, self.d_model], \
+        #     f'unexpected input shape received for `V: Value`: {v.shape}'
+
+        print(q)
+        print(k)
+        print(v)
+
+        q = K.dot(q, self.w_q)  # (batch, n_s, d_model) x (d_model, d_q)
         k = K.dot(k, self.w_k)
         v = K.dot(v, self.w_v)
+        print(q)
+        print(k)
+        print(v)
 
-        k_T = K.permute_dimensions(k, pattern=(0, 2, 1))
         z = K.batch_dot(q, k_T)
         z = z / np.sqrt(self.d_k)  # optional Mask for decoder after this line
         z = K.softmax(z)
         y = K.batch_dot(z, v)
 
-        print(f'    q={q.shape},\n'
-              f'    k={k.shape},\n'
-              f'    v={v.shape}\n'
-              f'    k_T={k_T.shape}\n'
-              f'    y={y.shape}')
+        print(f'Scaled Dot Product Attention:\n'
+              f'    q.shape={q.shape},\n'
+              f'    k.shape={k.shape},\n'
+              f'    v.shape={v.shape}\n'
+              f'    k_T.shape={k_T.shape}\n'
+              f'    y.shape={y.shape}')
 
         return y
 
@@ -116,11 +141,18 @@ class ScaledDotProductAttention(Layer):
         # assert isinstance(input_shape, list)
         # assert len(input_shape) == 3
         # assert len(input_shape[-1]) == 3
-        # shape_q, shape_k, shape_v = input_shape
+        if len(input_shape) == 3:
+            shape_q, shape_k, shape_v = input_shape
+        if len(input_shape) == 2:
+            shape_q, shape_k = input_shape
+            shape_v = shape_k
+        else:
+            shape_q = shape_k = shape_v = input_shape
 
-        print((None, self.d_model, self.d_v))
+        output_shape = (None, shape_q[1], self.d_v)
+        print(output_shape)
+        return output_shape
 
-        return None, self.d_model, self.d_v
 
 
 class MultiHeadAttention(Layer):
@@ -160,7 +192,7 @@ class MultiHeadAttention(Layer):
         assert isinstance(input_shape, list)
         head_shape = input_shape[-1]
 
-        return None, self.d_model, self.d_model  # None, head_shape[1], self.d_model
+        return head_shape
 
 
 class ContentBasedAttention(Layer):
@@ -199,9 +231,9 @@ def content_based_attention(h, m, w_q, w_k, w_v):
     if isinstance(w_q, list) or isinstance(w_k, list) or isinstance(w_v, list):
         raise NotImplementedError('multiple heads will be implemented soon. For now pass one head per layer.')
 
-    hQ = K.dot(h, self.weight_layer.w_k)
-    mK = K.dot(m, self.weight_layer.w_k)
-    mV = K.dot(m, self.weight_layer.w_v)
+    hQ = K.dot(h, w_k)
+    mK = K.dot(m, w_k)
+    mV = K.dot(m, w_v)
 
     z = K.batch_dot(hQ, mK)
     z = K.softmax(z)
