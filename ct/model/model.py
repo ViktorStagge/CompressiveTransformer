@@ -4,7 +4,17 @@ from keras import callbacks
 from keras import backend as K
 from keras.models import Model
 from keras.models import Sequential as SequentialModel
-from keras.layers import Embedding, LSTM, Dense, Dropout, Flatten, Input, Conv1D, Add, concatenate as Concatenate
+from keras.layers import Embedding, \
+                         LSTM, \
+                         Dense, \
+                         Dropout, \
+                         Flatten, \
+                         Input, \
+                         Conv1D, \
+                         Add, \
+                         Reshape, \
+                         Lambda, \
+                         concatenate as Concatenate
 
 
 from model.layers import MultiHeadAttention, ScaledDotProductAttention, LayerNormalization
@@ -54,7 +64,7 @@ def naive_multiehead_model(d_heads=2,
     # Dense
     _2_f = Flatten()(_1_m)
     _2_h_0 = Dense(units=dense_units, name='hidden_0')(_2_f)
-    _2_hL_0 = LayerNormalization(units=dense_units)(_2_h_0)
+    _2_hL_0 = LayerNormalization()(_2_h_0)
 
     # Dense Output
     output_layer = Dense(output_size, activation='softmax', name='output_layer')(_2_hL_0)
@@ -100,7 +110,7 @@ class MultiHeadAttentionModel(Model):
         # Dense
         _2_f = Flatten()(_1_m)
         _2_h_0 = Dense(units=dense_units, name='hidden_0')(_2_f)
-        _2_hL_0 = LayerNormalization(units=dense_units)(_2_h_0)
+        _2_hL_0 = LayerNormalization()(_2_h_0)
 
         # Dense Output
         output_layer = Dense(output_size, activation='softmax', name='output_layer')(_2_hL_0)
@@ -143,10 +153,11 @@ class CompressiveTransformer(Model):
 
         h = Embedding(input_dim=vocab_size,
                       output_dim=d_model,
-                      embeddings_initializer='uniform')(x)
+                      embeddings_initializer='uniform',
+                      name='h_L0')(x)
 
         # TODO: h = h_token + h_pos
-        concat_memory = Concatenate([memory, compressed_memory], axis=1)
+        concat_memory = Concatenate([memory, compressed_memory], axis=1, name='concatenated_memory')
         print(concat_memory)
 
         # #### Multi Head Attention #####
@@ -162,22 +173,27 @@ class CompressiveTransformer(Model):
         mha_skip = Add(name='mha_skip_L0')([h, mha])
         # #### #################### #####
 
-        a = LayerNormalization(units=sequence_length*d_model, name='mha_layer_norm_L0')(mha_skip)
+        a = LayerNormalization(name='mha_layer_norm_L0')(mha_skip)
 
-        mlp = Dense(units=d_mlp_hidden, name='mlp_hidden_0_L0')(a)
-        mlp = Dense(units=d_model, activation='softmax', name='mlp_L0')(mlp)
+        mlp_hidden = Dense(units=d_mlp_hidden, name='mlp_hidden_0_L0')(a)
+        mlp = Dense(units=d_model, activation=None, name='mlp_no_activation_L0')(mlp_hidden)
+        mlp = Lambda(lambda mlp: activations.softmax(mlp, axis=2), name='mlp_L0')(mlp)
         mlp_skip = Add(name='mlp_skip_L0')([mlp, a])
 
-        h_next = LayerNormalization(units=sequence_length*d_model, name='mlp_layer_norm_L0')(mlp_skip)
+        h_next = LayerNormalization(name='mlp_layer_norm_L0')(mlp_skip)
 
         output_layer = h_next
 
-        # super().__init__(*args, inputs=[x], outputs=[output_layer], name=name, **kwargs)
         super().__init__(*args,
                          inputs=[x, memory, compressed_memory],
-                         outputs=[output_layer],
+                         outputs=output_layer,
                          name=name,
                          **kwargs)
+
+        # Attention Reconstruction Model (Model for compressing memory)
+        self.reconstruction_model = AttentionReconstruction(input_shape=[self.memory.shape,
+                                                                         self.compressed_memory.shape],
+                                                            heads=sdpa_layers[:1])
         # layer outputs
         self._h = [h]
         self._sdpa = sdpa
@@ -199,11 +215,6 @@ class CompressiveTransformer(Model):
         self.d_heads = d_heads
         self.d_k = d_k
         self.d_mlp_hidden = d_mlp_hidden
-
-        self.sequence_length = sequence_length
-        self.reconstruction_model = AttentionReconstruction(input_shape=[self.memory.shape,
-                                                                         self.compressed_memory.shape],
-                                                            heads=self._sdpa_layers[:1])
 
     def comile(self,
                optimizer,
@@ -269,9 +280,6 @@ class AttentionReconstruction(Model):
 
         h = Input(batch_shape=h_shape)
         old_mem = Input(batch_shape=old_mem_shape)
-
-        print(h_shape)
-        print(old_mem_shape)
 
         if compression in self._max_pool:
             raise NotImplementedError()
