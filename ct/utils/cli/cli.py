@@ -1,13 +1,15 @@
 import click
 from train import train as _train
-from preprocess import tokenize as _tokenize
+from preprocess import Tokenizer
+from load.wma import load as load_wma
+
 
 @click.group()
 def main_group(**kwargs):
     pass
 
 
-@click.command()
+@main_group.command()
 @click.option('--dataset',
               help='specify the dataset to use',
               default='treebank',
@@ -16,28 +18,69 @@ def train(**kwargs):
     _train(**kwargs)
 
 
-@click.command()
-@click.option('--input_path',
+@main_group.command()
+@click.option('--input-path',
               'input_paths',
               help='specify the input files to use for creating the tokenizer',
               required=True,
               multiple=True,
               prompt=True)
-@click.option('--output_path',
-              'output_path',
+@click.option('--output-dir',
+              'output_dir',
+              default=None,
+              help='(optional) specify the output directory for the created tokens')
+@click.option('--tokenizer-output-path',
+              'tokenizer_output_path',
               default=None,
               help='(optional) specify the output file for the created tokenizer')
-def tokenize(input_paths, output_path, **kwargs):
+def tokenize(input_paths, output_dir, tokenizer_output_path, **kwargs):
     assert isinstance(input_paths, tuple), \
         'unexpected format for input_paths. Expected `multiple` to be set to True.'
     input_paths = list(input_paths)
+
     print(f'Using input files: {input_paths}')
     print(f'Using kwargs: {kwargs}')
-    if output_path:
-        print(f'Saving tokenizer: {output_path}')
+    if output_dir:
+        print(f'Saving tokens: {output_dir}')
+    if tokenizer_output_path:
+        print(f'Saving tokenizer: {tokenizer_output_path}')
 
-    _tokenize(input_paths, output_path=output_path)
+    Tokenizer(input_paths, tokens_output_dir=output_dir, tokenizer_output_path=tokenizer_output_path)
 
 
-main_group.add_command(train)
-main_group.add_command(tokenize)
+@main_group.group()
+@click.pass_context
+def reformat(*args, **kwargs):
+    pass
+
+
+@reformat.command()
+@click.option('--path-first-language',
+              'path_first_language',
+              help='input file containig sentences from one of the two languages',
+              required=True,
+              prompt=True)
+@click.option('--path-second-language',
+              'path_second_language',
+              help='input file containig sentences from one of the two languages',
+              required=True,
+              prompt=True)
+@click.option('--first-language',
+              'path_second_language',
+              help='(optional) name of first language',
+              show_default=True,
+              default='english')
+@click.option('--second-language',
+              'path_second_language',
+              help='(optional) name of second language',
+              show_default=True,
+              default='german')
+@click.option('--output-path',
+              'output_path',
+              required=True,
+              help='output path for the created DataFrame')
+def wma(**kwargs):
+    load_wma(**kwargs)
+
+
+# main_group.add_command(reformat)

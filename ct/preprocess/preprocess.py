@@ -31,7 +31,7 @@ class Tokenizer(ByteLevelBPETokenizer):
                  dropout=None,
                  vocab_size=30000,
                  min_frequency=2,
-                 special_tokens=[],
+                 special_tokens=None,
                  tokens_output_dir=None,
                  tokenizer_output_path=None):
         super().__init__(vocab_file=vocab_file,
@@ -46,6 +46,8 @@ class Tokenizer(ByteLevelBPETokenizer):
         if input_dir:
             raise NotImplementedError('appears to break and not converge for many [small] files.')
             input_paths = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
+        if special_tokens is None:
+            special_tokens = []
 
         self.train(files=input_paths,
                    vocab_size=vocab_size,

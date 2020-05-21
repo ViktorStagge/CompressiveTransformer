@@ -15,6 +15,7 @@ from keras.layers import Embedding, \
                          Reshape, \
                          Lambda, \
                          concatenate as Concatenate
+from omegaconf import OmegaConf
 
 
 from model.layers import MultiHeadAttention, ScaledDotProductAttention, LayerNormalization
@@ -121,7 +122,7 @@ class MultiHeadAttentionModel(Model):
 class CompressiveTransformer(Model):
     def __init__(self,
                  *args,
-                 sequence_length=512,
+                 sequence_length,
                  memory_size=512,
                  compressed_memory_size=512,
                  batch_size=1,
@@ -131,6 +132,7 @@ class CompressiveTransformer(Model):
                  d_k=None,
                  d_mlp_hidden=None,  # 3072
                  vocab_size=20000,
+                 output_size=None,
                  name='CompressiveTransformer',
                  **kwargs):
         if d_layers > 1:
@@ -141,26 +143,32 @@ class CompressiveTransformer(Model):
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
-        self.memory = K.zeros(shape=(batch_size, memory_size, d_model),
-                              name='memory')
-        self.compressed_memory = K.zeros(shape=(batch_size, compressed_memory_size, d_model),
-                                         name='compressed_memory')
+        if output_size is None:
+            output_size = vocab_size
+        memory_shape = (batch_size, memory_size, d_model)
+        compressed_memory_shape = (batch_size, compressed_memory_size, d_model)
+
+        memory = K.zeros(shape=memory_shape,
+                         name='memory')
+        compressed_memory = K.zeros(shape=compressed_memory_shape,
+                                    name='compressed_memory')
 
         # Build the internal model structure
         x = Input(shape=(sequence_length,), name='x')
-        memory = Input(shape=self.memory.shape[1:], name='memory')
-        compressed_memory = Input(shape=self.compressed_memory.shape[1:], name='compressed_memory')
+        x_memory = Input(shape=memory_shape[1:], name='memory')
+        x_compressed_memory = Input(shape=compressed_memory_shape[1:], name='compressed_memory')
 
-        h = Embedding(input_dim=vocab_size,
-                      output_dim=d_model,
-                      embeddings_initializer='uniform',
-                      name='h_L0')(x)
+        embedding_layer = Embedding(input_dim=vocab_size,
+                                    output_dim=d_model,
+                                    embeddings_initializer='uniform',
+                                    name='h_L0')
+        h = embedding_layer(x)
 
         # TODO: h = h_token + h_pos
-        concat_memory = Concatenate([memory, compressed_memory], axis=1, name='concatenated_memory')
-        print(concat_memory)
+        concat_memory = Concatenate([x_memory, x_compressed_memory], axis=1, name='concatenated_memory')
 
         # #### Multi Head Attention #####
+        # attention_input = Concatenate([concat_memory, h], axis=1, name='concatenated_attention_input')
         sdpa_layers = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model) for _ in range(d_heads)]
         sdpa = [layer([h, concat_memory]) for layer in sdpa_layers]
 
@@ -175,25 +183,31 @@ class CompressiveTransformer(Model):
 
         a = LayerNormalization(name='mha_layer_norm_L0')(mha_skip)
 
-        mlp_hidden = Dense(units=d_mlp_hidden, name='mlp_hidden_0_L0')(a)
+        mlp_hidden = Dense(units=d_mlp_hidden, activation='relu', name='mlp_hidden_0_L0')(a)
         mlp = Dense(units=d_model, activation=None, name='mlp_no_activation_L0')(mlp_hidden)
-        mlp = Lambda(lambda mlp: activations.softmax(mlp, axis=2), name='mlp_L0')(mlp)
         mlp_skip = Add(name='mlp_skip_L0')([mlp, a])
 
         h_next = LayerNormalization(name='mlp_layer_norm_L0')(mlp_skip)
 
-        output_layer = h_next
+        encoder_output = h_next  # intermediate output
+
+        _z = Flatten()(encoder_output)
+        _z = Dense(units=output_size, activation='softmax', name='output')(_z)
+        output_layer = _z
 
         super().__init__(*args,
-                         inputs=[x, memory, compressed_memory],
+                         inputs=[x, x_memory, x_compressed_memory],
                          outputs=output_layer,
                          name=name,
                          **kwargs)
 
         # Attention Reconstruction Model (Model for compressing memory)
-        self.reconstruction_model = AttentionReconstruction(input_shape=[self.memory.shape,
-                                                                         self.compressed_memory.shape],
+        self.reconstruction_model = AttentionReconstruction(input_shape=[memory_shape,
+                                                                         compressed_memory_shape],
                                                             heads=sdpa_layers[:1])
+        # Memory
+        self.memory = dict(memory=memory,
+                           compressed_memory=compressed_memory)
         # layer outputs
         self._h = [h]
         self._sdpa = sdpa
@@ -216,14 +230,14 @@ class CompressiveTransformer(Model):
         self.d_k = d_k
         self.d_mlp_hidden = d_mlp_hidden
 
-    def comile(self,
-               optimizer,
-               loss=None,
-               metrics=None,
-               loss_weights=None,
-               reconstruction_optimizer='Adam',
-               reconstruction_metrics=None,
-               **kwargs):
+    def compile(self,
+                optimizer,
+                loss=None,
+                metrics=None,
+                loss_weights=None,
+                reconstruction_optimizer='Adam',
+                reconstruction_metrics=None,
+                **kwargs):
         super().compile(optimizer=optimizer,
                         loss=loss,
                         metrics=metrics,
@@ -233,7 +247,7 @@ class CompressiveTransformer(Model):
                                           metrics=reconstruction_metrics)
 
     def train_on_batch(self, x, y, sample_weight=None, class_weight=None, reset_metrics=True):
-        x_input = [x, self.memory, self.compressed_memory]
+        x_input = [x, self.memory['memory'], self.memory['compressed_memory']]
         super().train_on_batch(x=x_input,
                                y=y,
                                sample_weight=sample_weight,
@@ -249,11 +263,12 @@ class CompressiveTransformer(Model):
                                                  reset_metrics=reset_metrics)
 
     def update_memory(self, h):
-        old_mem = self.memory[:, self.sequence_length, :]
+        old_mem = self.memory['memory'][:, self.sequence_length, :]
         new_cm = self.reconstruction_model(inputs=[h, old_mem])
 
-        self.memory = K.concatenate([self.memory[:, self.sequence_length:, :], h], axis=0)
-        self.compressed_memory = K.concatenate([self.compressed_memory[:, self.sequence_length:, :], new_cm], axis=0)
+        self.memory['memory'] = K.concatenate([self.memory['memory'][:, self.sequence_length:, :], h], axis=0)
+        self.memory['compressed_memory'] = K.concatenate(
+            [self.memory['compressed_memory'][:, self.sequence_length:, :], new_cm], axis=0)
         return old_mem, new_cm
 
 
@@ -327,9 +342,11 @@ class AttentionReconstruction(Model):
     def attention_reconstruction_loss(self):
 
         def _attention_reconstruction_loss(y_train, y_true):
-            assert len(self.heads) == 1
-            assert len(self._current_batch_old_mem) == 1
-            assert len(self._current_batch_new_cm) == 1
+            # assert len(self.heads) == 1
+            # assert len(self._current_batch_old_mem) == 1
+            # assert len(self._current_batch_new_cm) == 1
+            if all(s is None for s in y_train.shape):
+                return K.zeros(shape=(1,))
             loss = 0
 
             for head, h, old_mem, new_cm in zip(self.heads, self._current_batch_h,

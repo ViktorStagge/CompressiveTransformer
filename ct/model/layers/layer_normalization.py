@@ -7,12 +7,13 @@ from keras.layers import Layer
 
 class LayerNormalization(Layer):
 
-    def __init__(self, use_bias=True, use_gain=True, **kwargs):
+    def __init__(self, use_bias=True, use_gain=True, verbose=False, **kwargs):
         self.use_gain = use_gain
         self.use_bias = use_bias
         self.units = None
         self.gain = None
         self.bias = None
+        self.verbose = verbose
 
         super().__init__(**kwargs)
 
@@ -42,7 +43,10 @@ class LayerNormalization(Layer):
             y *= self.gain
         if self.use_bias:
             y += self.bias
-        print(y)
+        if self.verbose:
+            print(f'LayerNormalization:\n'
+                  f'    x.shape={x.shape}'
+                  f'    y.shape={y.shape}')
         return y
 
     def compute_output_shape(self, input_shape):
