@@ -21,8 +21,12 @@ from keras.layers import Embedding, \
 from omegaconf import OmegaConf
 
 
-from model.layers import MultiHeadAttention, ScaledDotProductAttention, LayerNormalization
-from model.layers.attention import ContentBasedAttention_CT, content_based_attention
+from model.layers import MultiHeadAttention, \
+                         ScaledDotProductAttention, \
+                         LayerNormalization
+from model.layers.attention import ContentBasedAttention_CT, \
+                                   content_based_attention
+from model.optimizers import get_optimizer
 
 
 def model():
@@ -145,24 +149,19 @@ class CompressiveTransformer(Model):
             'Compressed memory has to be longer than the compressed sequence length'
         if d_layers > 1:
             raise NotImplementedError()
-        if batch_size > 1:
-            raise NotImplementedError()
         if d_k is None:
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
         if output_size is None:
             output_size = vocab_size
-        memory_shape = (batch_size, memory_size, d_model)
-        compressed_memory_shape = (batch_size, compressed_memory_size, d_model)
-
-        memory = np.zeros(shape=memory_shape)
-        compressed_memory = np.zeros(shape=compressed_memory_shape)  # , name='compressed_memory')
+        memory = np.zeros(shape=(batch_size, memory_size, d_model))
+        compressed_memory = np.zeros(shape=(batch_size, compressed_memory_size, d_model))
 
         # Build the internal model structure
         x = Input(shape=(sequence_length,), name='x')
-        x_memory = Input(shape=memory_shape[1:], name='memory')
-        x_compressed_memory = Input(shape=compressed_memory_shape[1:], name='compressed_memory')
+        x_memory = Input(shape=memory.shape[1:], name='memory')
+        x_compressed_memory = Input(shape=compressed_memory.shape[1:], name='compressed_memory')
 
         embedding_layer = Embedding(input_dim=vocab_size,
                                     output_dim=d_model,
@@ -171,11 +170,12 @@ class CompressiveTransformer(Model):
         h = embedding_layer(x)
 
         # # TODO: h = h_token + h_pos
-        concat_memory = Concatenate([x_memory, x_compressed_memory], axis=1, name='concatenated_memory')
+        # concat_memory = Concatenate([x_memory, x_compressed_memory], axis=1, name='concatenated_memory')
+        h_tilde = Concatenate([x_compressed_memory, x_memory, h], axis=1, name='concatenated_h_tilde')
 
         # #### Multi Head Attention #####
         sdpa_layers = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model) for _ in range(d_heads)]
-        sdpa = [layer([h, concat_memory]) for layer in sdpa_layers]
+        sdpa = [layer([h, h_tilde]) for layer in sdpa_layers]
 
         mha_layer = MultiHeadAttention(d_heads=d_heads,
                                        d_model=d_model,
@@ -186,12 +186,11 @@ class CompressiveTransformer(Model):
         mha_skip = Add(name='mha_skip_L0')([h, mha])
         a = LayerNormalization(name='mha_layer_norm_L0')(mha_skip)
         # # #### #################### #####
-        #
-        #
+
         mlp_hidden = Dense(units=d_mlp_hidden, activation='relu', name='mlp_hidden_0_L0')(a)
         mlp = Dense(units=d_model, activation=None, name='mlp_no_activation_L0')(mlp_hidden)
         mlp_skip = Add(name='mlp_skip_L0')([mlp, a])
-        #
+
         h_next = LayerNormalization(name='mlp_layer_norm_L0')(mlp_skip)
 
         encoder_output = h_next  # intermediate output
@@ -250,7 +249,7 @@ class CompressiveTransformer(Model):
                 reconstruction_optimizer='Adam',
                 reconstruction_metrics=None,
                 **kwargs):
-        super().compile(optimizer=optimizer,
+        super().compile(optimizer=get_optimizer(optimizer),
                         loss=loss,
                         metrics=metrics,
                         loss_weights=loss_weights,
@@ -260,20 +259,21 @@ class CompressiveTransformer(Model):
                                                                   metrics=reconstruction_metrics)
 
     def train_on_batch(self, x, y, sample_weight=None, class_weight=None, reset_metrics=True):
-        #x_input = [x, self.memory['memory'], self.memory['compressed_memory']]
-        super().train_on_batch(x=x,  # x_input,
-                               y=y,
-                               sample_weight=sample_weight,
-                               class_weight=class_weight,
-                               reset_metrics=reset_metrics)
+        loss = super().train_on_batch(x=x,
+                                      y=y,
+                                      sample_weight=sample_weight,
+                                      class_weight=class_weight,
+                                      reset_metrics=reset_metrics)
 
-        h = K.function([self.input], self._h[0])(x)  # (x_input)
+        h = K.function(self.input, self._h[0])(x)  # (x_input)
+
         old_mem, new_cm = self.update_memory(h=h)
 
-        self.reconstruction_model['reconstruction_model'].train_on_batch(x=[h, old_mem],
-                                                                         y=new_cm,
-                                                                         sample_weight=sample_weight,
-                                                                         reset_metrics=reset_metrics)
+        loss_ar = self.reconstruction_model['reconstruction_model'].train_on_batch(x=[h, old_mem],
+                                                                                   y=new_cm,
+                                                                                   sample_weight=sample_weight,
+                                                                                   reset_metrics=reset_metrics)
+        return loss, loss_ar
 
     def summary(self, line_length=None, positions=None, print_fn=None):
         super().summary(line_length=line_length, positions=positions, print_fn=print_fn)
@@ -399,7 +399,7 @@ class AttentionReconstruction(Model):
             # assert len(self._current_batch_old_mem) == 1
             # assert len(self._current_batch_new_cm) == 1
             print('   calculating loss...')
-            return K.sqrt((y_true - y_pred) ** 2)
+            return (y_true - y_pred) ** 2
 
         #             for head, h, old_mem, new_cm in zip(self.heads,
         #                                                 self._current_batch['h'],

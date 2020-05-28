@@ -203,8 +203,10 @@ class ContentBasedAttention(Layer):
         super().build(input_shape)
 
     def call(self, x, **kwargs):
-        assert isinstance(x, list), 'expected to receive 2 tensors as input. Multiple inputs are not specified'
-        assert len(x) == 2, f'expected to receive 2 tensors as input. Received {len(x)}'
+        assert isinstance(x, list), \
+            'expected to receive 2 tensors as input. Multiple inputs are not specified'
+        assert len(x) == 2, \
+            f'expected to receive 2 tensors as input. Received {len(x)}'
         x1, x2 = x
 
         if self.weight_layer is not None:
