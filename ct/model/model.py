@@ -19,6 +19,7 @@ from keras.layers import Embedding, \
                          Lambda, \
                          concatenate as Concatenate
 from omegaconf import OmegaConf
+from typing import List
 
 
 from model.layers import MultiHeadAttention, \
@@ -147,6 +148,8 @@ class CompressiveTransformer(Model):
             'Memory has to be longer than the sequence length'
         assert compressed_memory_size >= sequence_length // compression_rate, \
             'Compressed memory has to be longer than the compressed sequence length'
+        if d_layers <= 0:
+            warnings.warn('d_layers is 0, not using any layers of the Compressive Transformer.')
         if d_layers > 1:
             raise NotImplementedError()
         if d_k is None:
@@ -155,47 +158,60 @@ class CompressiveTransformer(Model):
             d_mlp_hidden = d_model
         if output_size is None:
             output_size = vocab_size
-        memory = np.zeros(shape=(batch_size, memory_size, d_model))
-        compressed_memory = np.zeros(shape=(batch_size, compressed_memory_size, d_model))
+        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
+        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
         # Build the internal model structure
-        x = Input(shape=(sequence_length,), name='x')
-        x_memory = Input(shape=memory.shape[1:], name='memory')
-        x_compressed_memory = Input(shape=compressed_memory.shape[1:], name='compressed_memory')
+        x = Input(shape=(sequence_length,),
+                  name='x')
+        x_memory = Input(shape=memory.shape[1:],
+                         name='memory')
+        x_compressed_memory = Input(shape=compressed_memory.shape[1:],
+                                    name='compressed_memory')
 
         embedding_layer = Embedding(input_dim=vocab_size,
                                     output_dim=d_model,
                                     embeddings_initializer='uniform',
                                     name='h_L0')
         h = embedding_layer(x)
-
         # # TODO: h = h_token + h_pos
-        # concat_memory = Concatenate([x_memory, x_compressed_memory], axis=1, name='concatenated_memory')
-        h_tilde = Concatenate([x_compressed_memory, x_memory, h], axis=1, name='concatenated_h_tilde')
 
-        # #### Multi Head Attention #####
-        sdpa_layers = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model) for _ in range(d_heads)]
-        sdpa = [layer([h, h_tilde]) for layer in sdpa_layers]
+        _hs = []
+        _sdpa_layers = []
+        for i in range(d_layers):
+            _hs.append(h)
 
-        mha_layer = MultiHeadAttention(d_heads=d_heads,
-                                       d_model=d_model,
-                                       d_k=d_k,
-                                       d_v=d_model,
-                                       name='multihead_attention_L0')
-        mha = mha_layer(sdpa)
-        mha_skip = Add(name='mha_skip_L0')([h, mha])
-        a = LayerNormalization(name='mha_layer_norm_L0')(mha_skip)
-        # # #### #################### #####
+            _mem = Lambda(lambda mem: mem[:, i, :, :], name=f'select_memory_L{i}')(x_memory)
+            _comp_mem = Lambda(lambda mem: mem[:, i, :, :], name=f'select_compressed_memory_L{i}')(x_compressed_memory)
+            h_tilde = Concatenate([_comp_mem, _mem, h], axis=1, name=f'concatenated_h_tilde_L{i}')
 
-        mlp_hidden = Dense(units=d_mlp_hidden, activation='relu', name='mlp_hidden_0_L0')(a)
-        mlp = Dense(units=d_model, activation=None, name='mlp_no_activation_L0')(mlp_hidden)
-        mlp_skip = Add(name='mlp_skip_L0')([mlp, a])
+            # #### Multi Head Attention #####
+            sdpa_layers = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model) for _ in range(d_heads)]
+            _sdpa_layers.append(sdpa_layers)
+            sdpa = [sdpa_layer([h, h_tilde]) for sdpa_layer in sdpa_layers]
 
-        h_next = LayerNormalization(name='mlp_layer_norm_L0')(mlp_skip)
+            mha = MultiHeadAttention(d_heads=d_heads,
+                                     d_model=d_model,
+                                     d_k=d_k,
+                                     d_v=d_model,
+                                     name=f'multihead_attention_L{i}')(sdpa)
+            mha_skip = Add(name=f'mha_skip_L{i}')([h, mha])
+            a = LayerNormalization(name=f'mha_layer_norm_L{i}')(mha_skip)
+            # # #### #################### #####
 
-        encoder_output = h_next  # intermediate output
+            mlp_hidden = Dense(units=d_mlp_hidden,
+                               activation='relu',
+                               name=f'mlp_hidden_0_L{i}')(a)
+            mlp = Dense(units=d_model,
+                        activation=None,
+                        name=f'mlp_no_activation_L{i}')(mlp_hidden)
+            mlp_skip = Add(name=f'mlp_skip_L{i}')([mlp, a])
 
-        _z = Flatten()(encoder_output)  # _z = Flatten()(encoder_output)
+            h = LayerNormalization(name=f'h_L{i+1}')(mlp_skip)  # h, for L_{i+1}
+
+        encoder_output = h  # intermediate output
+
+        _z = Flatten()(encoder_output)
         _z = Dense(units=output_size, activation='softmax', name='output')(_z)
         output_layer = _z
 
@@ -207,19 +223,12 @@ class CompressiveTransformer(Model):
 
         # Attention Reconstruction Model (Model for compressing memory)
         # Memory
-        self.memory = dict(memory=memory,
-                           compressed_memory=compressed_memory)
+        self.memory = memory
+        self.compressed_memory = compressed_memory
         # layer outputs
-        self._h = [h]
-        self._sdpa = sdpa
-        self._mha = mha
-        self._mha_ship = mha_skip
-        self._a = a
-        self._mlp = mlp
-        self._mlp_skip = mlp_skip
+        self._h = _hs
         # layers
-        self._sdpa_layers = sdpa_layers
-        self._mha_layer = mha_layer
+        self._sdpa_layers = _sdpa_layers
         # settings
         self.sequence_length = sequence_length
         self.memory_size = memory_size
@@ -234,12 +243,12 @@ class CompressiveTransformer(Model):
         self.d_k = d_k
         self.d_mlp_hidden = d_mlp_hidden
 
-    def _create_reconstruction_model_(self):
-        self.reconstruction_model = dict(
-            reconstruction_model=AttentionReconstruction(input_shape=[self._h[0].shape,
-                                                                      self._h[0].shape],
-                                                         heads=self._sdpa_layers[:1],
-                                                         compression_rate=self.compression_rate))
+    def _create_reconstruction_models_(self):
+        self.reconstruction_models = [AttentionReconstruction(input_shape=[self._h[i].shape,
+                                                                           self._h[i].shape],
+                                                              heads=self._sdpa_layers[i][:1],
+                                                              compression_rate=self.compression_rate)
+                                      for i in range(self.d_layers)]
 
     def compile(self,
                 optimizer,
@@ -254,50 +263,76 @@ class CompressiveTransformer(Model):
                         metrics=metrics,
                         loss_weights=loss_weights,
                         **kwargs)
-        self._create_reconstruction_model_()
-        self.reconstruction_model['reconstruction_model'].compile(optimizer=reconstruction_optimizer,
-                                                                  metrics=reconstruction_metrics)
+        self._create_reconstruction_models_()
+        for reconstruction_model in self.reconstruction_models:
+            reconstruction_model.compile(optimizer=reconstruction_optimizer,
+                                         metrics=reconstruction_metrics)
 
-    def train_on_batch(self, x, y, sample_weight=None, class_weight=None, reset_metrics=True):
+    def train_on_batch(self,
+                       x,
+                       y,
+                       sample_weight=None,
+                       class_weight=None,
+                       reset_metrics=True):
+        """
+        Arguments:
+            x:
+            y:
+            sample_weight:
+            class_weight:
+            reset_metrics:
+
+        Returns:
+            loss:
+            loss_ar:
+        """
         loss = super().train_on_batch(x=x,
                                       y=y,
                                       sample_weight=sample_weight,
                                       class_weight=class_weight,
                                       reset_metrics=reset_metrics)
 
-        h = K.function(self.input, self._h[0])(x)  # (x_input)
+        h = K.function(self.input, self._h)(x)
 
         old_mem, new_cm = self.update_memory(h=h)
 
-        loss_ar = self.reconstruction_model['reconstruction_model'].train_on_batch(x=[h, old_mem],
-                                                                                   y=new_cm,
-                                                                                   sample_weight=sample_weight,
-                                                                                   reset_metrics=reset_metrics)
+        loss_ar = 0
+        for reconstruction_model, _h, _om, _ncm in zip(self.reconstruction_models, h, old_mem, new_cm):
+            loss_ar += reconstruction_model.train_on_batch(x=[_h, _om],
+                                                           y=_ncm,
+                                                           sample_weight=sample_weight,
+                                                           reset_metrics=reset_metrics)
+        loss_ar = loss_ar / max(1, self.d_layers)
         return loss, loss_ar
 
     def summary(self, line_length=None, positions=None, print_fn=None):
-        super().summary(line_length=line_length, positions=positions, print_fn=print_fn)
+        super().summary(line_length=line_length,
+                        positions=positions,
+                        print_fn=print_fn)
+
         if hasattr(self, 'reconstruction_model') \
-                and self.reconstruction_model is not None \
-                and 'reconstruction_model' in self.reconstruction_model:
+                and self.reconstruction_models is not None:
             if print_fn is None:
                 print('\n\n\n')
-            self.reconstruction_model['reconstruction_model'].summary(line_length=line_length,
-                                                                      positions=positions,
-                                                                      print_fn=print_fn)
+            self.reconstruction_models[0].summary(line_length=line_length,
+                                                  positions=positions,
+                                                  print_fn=print_fn)
 
-    def update_memory(self, h: np.ndarray):
-        old_mem = self.memory['memory'][:, :self.sequence_length, :]
-        new_cm = self.reconstruction_model['reconstruction_model'](inputs=[K.variable(h),
-                                                                           K.variable(old_mem)])
-        new_cm = K.eval(new_cm)
+    def update_memory(self,
+                      h: List[np.ndarray]):
+        old_mem = self.memory[:, :, :self.sequence_length, :]
+        old_mem = [old_mem[:, i, :, :] for i in range(self.d_layers)]
 
-        self.memory['memory'] = np.concatenate(
-            [self.memory['memory'][:, self.sequence_length:, :],
-             h], axis=1)
-        self.memory['compressed_memory'] = np.concatenate(
-            [self.memory['compressed_memory'][:, self.compressed_sequence_length:, :],
-             new_cm], axis=1)
+        new_cm = [reconstruction_model(inputs=[K.variable(_h), K.variable(_om)])
+                  for reconstruction_model, _h, _om in zip(self.reconstruction_models, h, old_mem)]
+        new_cm = [K.eval(_ncm) for _ncm in new_cm]
+
+        for i, (_h, _ncm) in enumerate(zip(h, new_cm)):
+            self.memory[:, i, :-self.sequence_length, :] = self.memory[:, i, self.sequence_length:, :]
+            self.memory[:, i, -self.sequence_length:, :] = _h
+
+            self.compressed_memory[:, i, :-self.compressed_sequence_length, :] = self.compressed_memory[:, i, self.compressed_sequence_length:, :]
+            self.compressed_memory[:, i, -self.compressed_sequence_length:, :] = _ncm
 
         return old_mem, new_cm
 
