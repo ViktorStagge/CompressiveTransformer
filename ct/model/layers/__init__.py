@@ -4,3 +4,4 @@ from model.layers.attention import ContentBasedAttention, \
                                    MultiHeadAttention, \
                                    content_based_attention
 from model.layers.layer_normalization import LayerNormalization
+from model.layers.embedding import ReverseEmbedding

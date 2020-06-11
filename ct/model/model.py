@@ -150,16 +150,17 @@ class CompressiveTransformer(Model):
             'Compressed memory has to be longer than the compressed sequence length'
         if d_layers <= 0:
             warnings.warn('d_layers is 0, not using any layers of the Compressive Transformer.')
-        if d_layers > 1:
-            raise NotImplementedError()
+        # if d_layers > 1:
+        #     raise NotImplementedError('Input.shape=(None, d_layers, sequence_length, d_model) '
+        #                               'is not supported in Keras.')
         if d_k is None:
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
         if output_size is None:
             output_size = vocab_size
-        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
-        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
+        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))  # np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
+        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))  # np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
         # Build the internal model structure
         x = Input(shape=(sequence_length,),
@@ -168,6 +169,9 @@ class CompressiveTransformer(Model):
                          name='memory')
         x_compressed_memory = Input(shape=compressed_memory.shape[1:],
                                     name='compressed_memory')
+
+        # _x_memory = Reshape(target_shape=(d_layers, memory_size, d_model))(x_memory)
+        # _x_compressed_memory = Reshape(target_shape=(d_layers, compressed_memory_size, d_model))(x_compressed_memory)
 
         embedding_layer = Embedding(input_dim=vocab_size,
                                     output_dim=d_model,
@@ -303,7 +307,7 @@ class CompressiveTransformer(Model):
                                                            sample_weight=sample_weight,
                                                            reset_metrics=reset_metrics)
         loss_ar = loss_ar / max(1, self.d_layers)
-        return loss, loss_ar
+        return loss  # , loss_ar
 
     def summary(self, line_length=None, positions=None, print_fn=None):
         super().summary(line_length=line_length,
@@ -320,12 +324,15 @@ class CompressiveTransformer(Model):
 
     def update_memory(self,
                       h: List[np.ndarray]):
+        # breaks on d_layers > 1
+        # breaks on dims Input > 3 ...
         old_mem = self.memory[:, :, :self.sequence_length, :]
         old_mem = [old_mem[:, i, :, :] for i in range(self.d_layers)]
 
-        new_cm = [reconstruction_model(inputs=[K.variable(_h), K.variable(_om)])
-                  for reconstruction_model, _h, _om in zip(self.reconstruction_models, h, old_mem)]
-        new_cm = [K.eval(_ncm) for _ncm in new_cm]
+        # new_cm = [reconstruction_model(inputs=[K.variable(_h), K.variable(_om)])
+        #           for reconstruction_model, _h, _om in zip(self.reconstruction_models, h, old_mem)]
+        # new_cm = [K.eval(_ncm) for _ncm in new_cm]
+        new_cm = [self.compressed_memory[:, i, :self.compressed_sequence_length, :] for i in range(self.d_layers)]
 
         for i, (_h, _ncm) in enumerate(zip(h, new_cm)):
             self.memory[:, i, :-self.sequence_length, :] = self.memory[:, i, self.sequence_length:, :]
