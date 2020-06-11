@@ -1,6 +1,7 @@
 import numpy as np
 
 from keras import layers
+from keras import activations
 from keras import backend as K
 from keras.layers import Layer
 from omegaconf import OmegaConf
@@ -12,7 +13,7 @@ class ReverseEmbedding(Layer):
     def __init__(self, embedding_layer, activation=None, **kwargs):
         super().__init__(**kwargs)
         self.embedding_layer = embedding_layer
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.vocab_size = embedding_layer.get_config()['input_dim']
         self.trainable = False
 
@@ -26,12 +27,11 @@ class ReverseEmbedding(Layer):
         input_emb = inputs[:, -1, :]
         w_transpose = K.transpose(self.embedding_layer.embeddings)  # OK with w_tranpose?
 
-        print(f'input_emb.shape={input_emb.shape}')
-        print(f'w_tanspose.shape={w_transpose.shape}')
-
         y = K.dot(input_emb, w_transpose)
-        if self.activation == 'softmax':
-            y = K.softmax(y, axis=-1)
+        # if self.activation == 'softmax':
+        #     y = K.softmax(y, axis=-1)
+        if self.activation is not None:
+            y = self.activation(y)
         return y
 
     def compute_output_shape(self, input_shape):

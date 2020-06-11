@@ -24,7 +24,8 @@ from typing import List
 
 from model.layers import MultiHeadAttention, \
                          ScaledDotProductAttention, \
-                         LayerNormalization
+                         LayerNormalization, \
+                         ReverseEmbedding
 from model.layers.attention import ContentBasedAttention_CT, \
                                    content_based_attention
 from model.optimizers import get_optimizer
@@ -137,7 +138,7 @@ class CompressiveTransformer(Model):
                  batch_size=1,
                  d_layers=1,
                  d_heads=2,
-                 d_model=1024,  #
+                 d_model=1024,
                  d_k=None,
                  d_mlp_hidden=None,  # 3072
                  vocab_size=20000,
@@ -150,17 +151,14 @@ class CompressiveTransformer(Model):
             'Compressed memory has to be longer than the compressed sequence length'
         if d_layers <= 0:
             warnings.warn('d_layers is 0, not using any layers of the Compressive Transformer.')
-        # if d_layers > 1:
-        #     raise NotImplementedError('Input.shape=(None, d_layers, sequence_length, d_model) '
-        #                               'is not supported in Keras.')
         if d_k is None:
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
         if output_size is None:
             output_size = vocab_size
-        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))  # np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
-        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))  # np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
+        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
+        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
         # Build the internal model structure
         x = Input(shape=(sequence_length,),
@@ -169,9 +167,6 @@ class CompressiveTransformer(Model):
                          name='memory')
         x_compressed_memory = Input(shape=compressed_memory.shape[1:],
                                     name='compressed_memory')
-
-        # _x_memory = Reshape(target_shape=(d_layers, memory_size, d_model))(x_memory)
-        # _x_compressed_memory = Reshape(target_shape=(d_layers, compressed_memory_size, d_model))(x_compressed_memory)
 
         embedding_layer = Embedding(input_dim=vocab_size,
                                     output_dim=d_model,
@@ -215,13 +210,19 @@ class CompressiveTransformer(Model):
 
         encoder_output = h  # intermediate output
 
-        _z = Flatten()(encoder_output)
-        _z = Dense(units=output_size, activation='softmax', name='output')(_z)
-        output_layer = _z
+        reverse_embedding_layer = ReverseEmbedding(embedding_layer,
+                                                   activation='softmax',
+                                                   name='output')
+        _z = reverse_embedding_layer(encoder_output)
+        outputs = _z
+
+        # _z = Flatten()(encoder_output)
+        # _z = Dense(units=output_size, activation='softmax', name='output')(_z)
+        # outputs = _z
 
         super().__init__(*args,
                          inputs=[x, x_memory, x_compressed_memory],
-                         outputs=output_layer,
+                         outputs=outputs,
                          name=name,
                          **kwargs)
 
