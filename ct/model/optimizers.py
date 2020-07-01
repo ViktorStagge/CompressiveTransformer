@@ -8,6 +8,7 @@ class Adam:
     learning_rate: float = 0.001
     beta_1: float = 0.9
     beta_2: float = 0.999
+    clipnorm: float = 0.1
 
 
 def get_optimizer(method, **kwargs):

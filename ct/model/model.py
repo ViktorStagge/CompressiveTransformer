@@ -182,7 +182,7 @@ class CompressiveTransformer(Model):
 
             _mem = Lambda(lambda mem: mem[:, i, :, :], name=f'select_memory_L{i}')(x_memory)
             _comp_mem = Lambda(lambda mem: mem[:, i, :, :], name=f'select_compressed_memory_L{i}')(x_compressed_memory)
-            h_tilde = Concatenate([_comp_mem, _mem, h], axis=1, name=f'concatenated_h_tilde_L{i}')
+            h_tilde = Concatenate([_comp_mem, _mem, h], axis=1, name=f'h_tilde_L{i}')
 
             # #### Multi Head Attention #####
             sdpa_layers = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model) for _ in range(d_heads)]
