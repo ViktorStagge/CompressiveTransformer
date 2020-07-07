@@ -45,7 +45,10 @@ def tokenize(input_paths, output_dir, tokenizer_output_path, **kwargs):
     if tokenizer_output_path:
         print(f'Saving tokenizer: {tokenizer_output_path}')
 
-    Tokenizer(input_paths, tokens_output_dir=output_dir, tokenizer_output_path=tokenizer_output_path)
+    Tokenizer(input_paths,
+              tokens_output_dir=output_dir,
+              tokenizer_output_path=tokenizer_output_path,
+              )
 
 
 @main_group.group()
