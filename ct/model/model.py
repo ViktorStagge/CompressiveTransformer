@@ -31,24 +31,6 @@ from model.layers.attention import ContentBasedAttention_CT, \
 from model.optimizers import get_optimizer
 
 
-def model():
-    model = naive_model()
-    return model
-
-
-def naive_model():
-    model = SequentialModel()
-    model.add(Embedding(input_dim=1000, output_dim=100))
-    model.add(LSTM(units=64))
-    model.add(Dense(100))
-    model.add(Dropout(rate=0.2))
-    model.add(Dense(50))
-
-    model.compile(optimizer='Adam',
-                  loss='mse')
-    return model
-
-
 def naive_multiehead_model(d_heads=2,
                            d_model=128,
                            d_k=16,
@@ -142,7 +124,6 @@ class CompressiveTransformer(Model):
                  d_k=None,
                  d_mlp_hidden=None,  # 3072
                  vocab_size=20000,
-                 output_size=None,
                  name='CompressiveTransformer',
                  **kwargs):
         assert memory_size >= sequence_length, \
@@ -155,8 +136,6 @@ class CompressiveTransformer(Model):
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
-        if output_size is None:
-            output_size = vocab_size
         memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
         compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
@@ -216,10 +195,6 @@ class CompressiveTransformer(Model):
         _z = reverse_embedding_layer(encoder_output)
         outputs = _z
 
-        # _z = Flatten()(encoder_output)
-        # _z = Dense(units=output_size, activation='softmax', name='output')(_z)
-        # outputs = _z
-
         super().__init__(*args,
                          inputs=[x, x_memory, x_compressed_memory],
                          outputs=outputs,
@@ -230,10 +205,10 @@ class CompressiveTransformer(Model):
         # Memory
         self.memory = memory
         self.compressed_memory = compressed_memory
-        # layer outputs
-        self._h = _hs
         # layers
         self._sdpa_layers = _sdpa_layers
+        # layer outputs
+        self._h = _hs
         # settings
         self.sequence_length = sequence_length
         self.memory_size = memory_size
@@ -412,11 +387,9 @@ class AttentionReconstruction(Model):
                 **kwargs):
         if loss == 'attention_reconstruction':
             loss = self.attention_reconstruction_loss()
-            print(loss)
         else:
             warnings.warn('using non-standard loss for AttentionReconstruction', RuntimeWarning)
 
-        # self.add_loss(lambda: K.reduce_mean(self._current_batch['h']))
         super().compile(optimizer=optimizer,
                         loss=loss,
                         metrics=metrics,
