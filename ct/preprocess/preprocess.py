@@ -1,7 +1,6 @@
 import os
 import pickle
 import pandas as pd
-from keras.preprocessing.text import Tokenizer
 from tokenizers import ByteLevelBPETokenizer
 
 
@@ -12,6 +11,8 @@ def preprocess(dataset,
                text_column='text',
                max_vocab=None,
                char_level=False):
+    from keras.preprocessing.text import Tokenizer
+
     tokenizer = Tokenizer(num_words=max_vocab,
                           lower=True,
                           char_level=char_level)
@@ -95,6 +96,16 @@ class Tokenizer(ByteLevelBPETokenizer):
             directory = os.path.join(*os.path.split(path)[:-1])
             name = os.path.split(path)[-1]
         super().save(directory=directory, name=name)
+
+    @staticmethod
+    def load(path=None, directory=None, name=None):
+        assert (path is not None) ^ (directory is not None), \
+            'must specify either output path or output directory.'
+
+        if path:
+            directory = os.path.join(*os.path.split(path)[:-1])
+            name = os.path.split(path)[-1]
+        raise NotImplementedError
 
 
 def tokenize(input_paths=None,

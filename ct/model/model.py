@@ -143,6 +143,7 @@ class CompressiveTransformer(Model):
                  d_mlp_hidden=None,  # 3072
                  vocab_size=20000,
                  output_size=None,
+                 dropout_probability=0.1,
                  name='CompressiveTransformer',
                  **kwargs):
         assert memory_size >= sequence_length, \
@@ -172,8 +173,9 @@ class CompressiveTransformer(Model):
                                     output_dim=d_model,
                                     embeddings_initializer='uniform',
                                     name='h_L0')
-        h = embedding_layer(x)
+        e = embedding_layer(x)
         # # TODO: h = h_token + h_pos
+        h = Dropout(rate=dropout_probability, name='dropout_embedding')(e)
 
         _hs = []
         _sdpa_layers = []
@@ -204,8 +206,9 @@ class CompressiveTransformer(Model):
             mlp = Dense(units=d_model,
                         activation=None,
                         name=f'mlp_no_activation_L{i}')(mlp_hidden)
-            mlp_skip = Add(name=f'mlp_skip_L{i}')([mlp, a])
-
+            mlp_drop = Dropout(rate=dropout_probability, name=f'dropout_L{i}')(mlp)
+            mlp_skip = Add(name=f'mlp_skip_L{i}')([mlp_drop, a])
+            
             h = LayerNormalization(name=f'h_L{i+1}')(mlp_skip)  # h, for L_{i+1}
 
         encoder_output = h  # intermediate output
@@ -230,10 +233,16 @@ class CompressiveTransformer(Model):
         # Memory
         self.memory = memory
         self.compressed_memory = compressed_memory
+        
         # layer outputs
         self._h = _hs
+        
         # layers
         self._sdpa_layers = _sdpa_layers
+        
+        # dynamic settings
+        self.training = False
+        
         # settings
         self.sequence_length = sequence_length
         self.memory_size = memory_size
@@ -296,11 +305,11 @@ class CompressiveTransformer(Model):
                                       sample_weight=sample_weight,
                                       class_weight=class_weight,
                                       reset_metrics=reset_metrics)
-
+        
         h = K.function(self.input, self._h)(x)
-
+        
         old_mem, new_cm = self.update_memory(h=h)
-
+        
         loss_ar = 0
         for reconstruction_model, _h, _om, _ncm in zip(self.reconstruction_models, h, old_mem, new_cm):
             loss_ar += reconstruction_model.train_on_batch(x=[_h, _om],
@@ -314,7 +323,7 @@ class CompressiveTransformer(Model):
         super().summary(line_length=line_length,
                         positions=positions,
                         print_fn=print_fn)
-
+        
         if hasattr(self, 'reconstruction_model') \
                 and self.reconstruction_models is not None:
             if print_fn is None:
@@ -329,16 +338,16 @@ class CompressiveTransformer(Model):
         # breaks on dims Input > 3 ...
         old_mem = self.memory[:, :, :self.sequence_length, :]
         old_mem = [old_mem[:, i, :, :] for i in range(self.d_layers)]
-
+        
         # new_cm = [reconstruction_model(inputs=[K.variable(_h), K.variable(_om)])
         #           for reconstruction_model, _h, _om in zip(self.reconstruction_models, h, old_mem)]
         # new_cm = [K.eval(_ncm) for _ncm in new_cm]
         new_cm = [self.compressed_memory[:, i, :self.compressed_sequence_length, :] for i in range(self.d_layers)]
-
+        
         for i, (_h, _ncm) in enumerate(zip(h, new_cm)):
             self.memory[:, i, :-self.sequence_length, :] = self.memory[:, i, self.sequence_length:, :]
             self.memory[:, i, -self.sequence_length:, :] = _h
-
+            
             self.compressed_memory[:, i, :-self.compressed_sequence_length, :] = self.compressed_memory[:, i, self.compressed_sequence_length:, :]
             self.compressed_memory[:, i, -self.compressed_sequence_length:, :] = _ncm
 
