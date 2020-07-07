@@ -5,13 +5,16 @@ REMOTE_SERVER=adrian_minimal
 REMOTE_FOLDER=CompressiveTransformer
 
 
-.PHONY: train evaluate remote-sync sync-remote
+.PHONY: train evaluate notebook remote-sync sync-remote
 
 train:
 	python train.py --kwarg1 something
 
 evaluate:
 	@echo "Not implemented"
+
+notebook:
+	jupyter notebook --port=7888
 
 remote-sync:
 	@rsync -avze ssh \
