@@ -1,5 +1,6 @@
 import os
 import pickle
+import numpy as np
 import pandas as pd
 from tokenizers import ByteLevelBPETokenizer
 
@@ -108,34 +109,55 @@ class Tokenizer(ByteLevelBPETokenizer):
         raise NotImplementedError
 
 
-def tokenize(input_paths=None,
-             input_dir=None,
-             vocab_file=None,
-             lowercase=False,
-             dropout=None,
-             vocab_size=30000,
-             min_frequency=2,
-             special_tokens=[],
-             output_path=None):
-    raise DeprecationWarning('use preprocess.Tokenizer instead.')
-    assert (input_paths is not None) ^ (input_dir is not None), \
-        'must specify either input_paths or input_dir to use for tokenization.'
-    if input_dir:
-        input_paths = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
+def preprocess_wma(input_paths,
+                   dataset,
+                   tokenizer_output_path,
+                   train_val_split=0.8,
+                   inplace=True,
+                   vocab_size=30000,
+                   language='english',
+                   lowercase=False,
+                   tokenizer=None):
+    if tokenizer is None:
+        tokenizer = Tokenizer(input_paths=list(input_paths.values()),
+                              tokenizer_output_path=tokenizer_output_path,
+                              vocab_size=vocab_size,
+                              lowercase=lowercase)
+    elif isinstance(tokenizer, str):
+        tokenizer = Tokenizer.load(path=tokenizer)
+    
+    dataset, x_train, x_val = _preprocess_wma(dataset=dataset,
+                                              tokenizer=tokenizer,
+                                              train_val_split=train_val_split,
+                                              language=language,
+                                              inplace=inplace)
 
-    tokenizer = ByteLevelBPETokenizer(vocab_file=vocab_file,
-                                      lowercase=lowercase,
-                                      dropout=dropout)
+    base_dir = os.path.join(*os.path.split(input_paths['en'])[:-2])
+    base_filename = f'en-v{vocab_size}-{"lowercase-" if lowercase else ""}-p{len(input_paths)}.pkl.zip'
+    os.makedirs(os.path.join(base_dir, 'tokenized'), exist_ok=True)
 
-    if vocab_file is None:
-        tokenizer.train(files=input_paths,
-                        vocab_size=vocab_size,
-                        min_frequency=min_frequency,
-                        special_tokens=special_tokens)
+    x_train.to_pickle(os.path.join(base_dir, 'tokenized', 'train-' + base_filename))
+    x_val.to_pickle(os.path.join(base_dir, 'tokenized', 'val-' + base_filename))
+    
+    return dataset, x_train, x_val
 
-    if output_path:
-        output_dir = os.path.join(*os.path.split(output_path)[:-1])
-        name = os.path.split(output_path)[-1]
-        tokenizer.save(output_dir, name=name)
 
-    return tokenizer
+def _preprocess_wma(dataset,
+                    tokenizer,
+                    train_val_split=0.8,
+                    language='english',
+                    inplace=True):
+    if not inplace:
+        dataset = dataset.copy()
+    
+    column_ids = f'{language}_ids'
+    encodings = tokenizer.encode_batch(dataset[language].tolist())
+    dataset[column_ids] = [encoding.ids for encoding in encodings]
+    
+    val_index = int(len(dataset) * train_val_split)
+    x_train = dataset[[column_ids]][:val_index]
+    x_val = dataset[[column_ids]][-val_index:]
+    
+    x_train = np.array([ids for english_ids in x_train for ids in english_ids])
+    x_val = np.array([ids for english_ids in x_val for ids in english_ids])
+    return dataset, x_train, x_val
