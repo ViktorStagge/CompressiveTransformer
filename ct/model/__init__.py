@@ -1,4 +1,2 @@
-from model.model import model, \
-                        CompressiveTransformer, \
+from model.model import CompressiveTransformer, \
                         AttentionReconstruction
-
