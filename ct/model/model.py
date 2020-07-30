@@ -354,9 +354,6 @@ class AttentionReconstruction(Model):
         h = Input(batch_shape=h_shape, name='ar_h')
         old_mem = Input(batch_shape=old_mem_shape, name='ar_old_mem')
 
-        # zeros = Lambda(lambda _h: _h*0.00001, name='ar_pseudo_use_h')(h)
-        # pseudo_old_mem = Add(name='ar_add_zeros')([old_mem, zeros])
-
         if compression in _max_pool:
             raise NotImplementedError()
         elif compression in _1d_conv:
@@ -421,7 +418,7 @@ class AttentionReconstruction(Model):
             # assert len(self.heads) == 1
             # assert len(self._current_batch_old_mem) == 1
             # assert len(self._current_batch_new_cm) == 1
-            print('   calculating loss...')
+            # print('   calculating loss...')
             return (y_true - y_pred) ** 2
 
         #             for head, h, old_mem, new_cm in zip(self.heads,

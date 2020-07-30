@@ -6,7 +6,7 @@ def next_token_batch_generator(*,
                                ct,
                                data=None,
                                data_path=None,
-                               epochs,
+                               epochs=None,
                                epoch_steps=None,
                                batch_size,
                                sequence_length,
@@ -15,6 +15,8 @@ def next_token_batch_generator(*,
           'provide either a dataset or a path'
     if data is None:
         data = np.load(data_path)
+    if epochs is None:
+        epochs = int(1e16)
     if epoch_steps is None:
         epoch_steps = data.size[1] - data.size[1] % sequence_length
     if batch_size != sequence_length:
@@ -22,7 +24,7 @@ def next_token_batch_generator(*,
 
     def _next_token_batch_generator():
         for e in range(epochs):
-            for i in range(0, epoch_steps - epoch_steps % sequence_length, batch_size):
+            for i in range(0, epoch_steps - sequence_length - epoch_steps % sequence_length, batch_size):
                 x_batch = [list(data[i + pos:i + pos + sequence_length]) for pos in range(batch_size)]
                 x_batch = np.array(x_batch)
                 x_batch = [x_batch, ct.memory, ct.compressed_memory]

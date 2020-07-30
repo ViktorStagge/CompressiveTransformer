@@ -25,11 +25,10 @@ class ReverseEmbedding(Layer):
             'expected 3 dimensions'
 
         input_emb = inputs[:, -1, :]
-        w_transpose = K.transpose(self.embedding_layer.embeddings)  # OK with w_tranpose?
+        w_transpose = K.transpose(self.embedding_layer.embeddings)
 
         y = K.dot(input_emb, w_transpose)
-        # if self.activation == 'softmax':
-        #     y = K.softmax(y, axis=-1)
+
         if self.activation is not None:
             y = self.activation(y)
         return y

@@ -1,7 +1,7 @@
 import click
 from train import train as _train
 from preprocess import Tokenizer
-from load.wma import load as load_wma
+from load.wma import wma as load_wma
 
 
 @click.group()
@@ -47,8 +47,7 @@ def tokenize(input_paths, output_dir, tokenizer_output_path, **kwargs):
 
     Tokenizer(input_paths,
               tokens_output_dir=output_dir,
-              tokenizer_output_path=tokenizer_output_path,
-              )
+              tokenizer_output_path=tokenizer_output_path)
 
 
 @main_group.group()

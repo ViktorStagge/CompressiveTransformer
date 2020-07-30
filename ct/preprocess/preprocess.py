@@ -2,6 +2,9 @@ import os
 import pickle
 import numpy as np
 import pandas as pd
+
+from typing import Dict, \
+                   Optional
 from tokenizers import ByteLevelBPETokenizer
 
 
@@ -107,57 +110,3 @@ class Tokenizer(ByteLevelBPETokenizer):
             directory = os.path.join(*os.path.split(path)[:-1])
             name = os.path.split(path)[-1]
         raise NotImplementedError
-
-
-def preprocess_wma(input_paths,
-                   dataset,
-                   tokenizer_output_path,
-                   train_val_split=0.8,
-                   inplace=True,
-                   vocab_size=30000,
-                   language='english',
-                   lowercase=False,
-                   tokenizer=None):
-    if tokenizer is None:
-        tokenizer = Tokenizer(input_paths=list(input_paths.values()),
-                              tokenizer_output_path=tokenizer_output_path,
-                              vocab_size=vocab_size,
-                              lowercase=lowercase)
-    elif isinstance(tokenizer, str):
-        tokenizer = Tokenizer.load(path=tokenizer)
-    
-    dataset, x_train, x_val = _preprocess_wma(dataset=dataset,
-                                              tokenizer=tokenizer,
-                                              train_val_split=train_val_split,
-                                              language=language,
-                                              inplace=inplace)
-
-    base_dir = os.path.join(*os.path.split(input_paths['en'])[:-2])
-    base_filename = f'en-v{vocab_size}-{"lowercase-" if lowercase else ""}-p{len(input_paths)}.pkl.zip'
-    os.makedirs(os.path.join(base_dir, 'tokenized'), exist_ok=True)
-
-    x_train.to_pickle(os.path.join(base_dir, 'tokenized', 'train-' + base_filename))
-    x_val.to_pickle(os.path.join(base_dir, 'tokenized', 'val-' + base_filename))
-    
-    return dataset, x_train, x_val
-
-
-def _preprocess_wma(dataset,
-                    tokenizer,
-                    train_val_split=0.8,
-                    language='english',
-                    inplace=True):
-    if not inplace:
-        dataset = dataset.copy()
-    
-    column_ids = f'{language}_ids'
-    encodings = tokenizer.encode_batch(dataset[language].tolist())
-    dataset[column_ids] = [encoding.ids for encoding in encodings]
-    
-    val_index = int(len(dataset) * train_val_split)
-    x_train = dataset[[column_ids]][:val_index]
-    x_val = dataset[[column_ids]][-val_index:]
-    
-    x_train = np.array([ids for english_ids in x_train for ids in english_ids])
-    x_val = np.array([ids for english_ids in x_val for ids in english_ids])
-    return dataset, x_train, x_val

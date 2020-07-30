@@ -8,11 +8,11 @@ def _load_file(path):
     return content
 
 
-def load(path_first_language,
-         path_second_language,
-         first_language='english',
-         second_language='german',
-         output_path=None):
+def wma(path_first_language,
+        path_second_language,
+        first_language='english',
+        second_language='german',
+        output_path=None):
     first_sentences = _load_file(path_first_language)
     second_sentences = _load_file(path_second_language)
 
