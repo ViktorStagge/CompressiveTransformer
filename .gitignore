@@ -1,4 +1,3 @@
-
 # input & output data. keep folder
 data/*
 !data/.gitignore
