@@ -1,5 +1,6 @@
 import os
 import pickle
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -11,11 +12,13 @@ from tokenizers import ByteLevelBPETokenizer
 separator_samples = '############<new_sample>############'
 
 
-def preprocess(dataset,
-               text_column='text',
-               max_vocab=None,
-               char_level=False):
+def keras_tokenizer(dataset,
+                    text_column='text',
+                    max_vocab=None,
+                    char_level=False):
     from keras.preprocessing.text import Tokenizer
+    warnings.warn('using keras\' tokenizer instead of default `Tokenizer`. '
+                  'Results may worsen.', DeprecationWarning)
 
     tokenizer = Tokenizer(num_words=max_vocab,
                           lower=True,
