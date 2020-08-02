@@ -1,4 +1,5 @@
 import os
+import yaml
 import pickle
 import warnings
 import numpy as np
@@ -6,6 +7,7 @@ import pandas as pd
 
 from typing import Dict, \
                    Optional
+from omegaconf import OmegaConf
 from tokenizers import ByteLevelBPETokenizer
 
 
@@ -51,16 +53,24 @@ class Tokenizer(ByteLevelBPETokenizer):
                (input_dir is not None) ^ \
                (vocab_file is not None and merges_file is not None), \
             'must specify either input_paths, input_dir, or vocab_file & merges_file to use for tokenization.'
-        if input_dir:
-            raise NotImplementedError('appears to break and not converge for many [small] files.')
+        if input_dir and input_paths is None:
             input_paths = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
         if special_tokens is None:
             special_tokens = []
 
-        self.train(files=input_paths,
-                   vocab_size=vocab_size,
-                   min_frequency=min_frequency,
-                   special_tokens=special_tokens)
+        self.config = OmegaConf.create(dict(
+            lowercase=lowercase,
+            dropout=dropout,
+            vocab_size=vocab_size,
+            min_frequency=min_frequency,
+            special_tokens=special_tokens
+        ))
+
+        if input_paths:
+            self.train(files=input_paths,
+                       vocab_size=vocab_size,
+                       min_frequency=min_frequency,
+                       special_tokens=special_tokens)
 
         if tokenizer_output_path is not None:
             self.save(path=tokenizer_output_path)
@@ -71,9 +81,12 @@ class Tokenizer(ByteLevelBPETokenizer):
     def encode_files(self,
                      input_paths=None,
                      input_dir=None,
+                     return_encodings=True,
                      tokens_output_dir=None):
         assert (input_paths is not None) ^ (input_dir is not None), \
             'must specify either input_paths or input_dir to use for tokenization.'
+        if input_dir and input_paths is None:
+            input_paths = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
 
         encodings = []
         for path in input_paths:
@@ -89,27 +102,41 @@ class Tokenizer(ByteLevelBPETokenizer):
 
                 with open(os.path.join(tokens_output_dir, filename), 'wb') as file:
                     pickle.dump(encoding.ids, file)
-            else:
+            if return_encodings:
                 encodings.append(encoding)
 
-        if tokens_output_dir is None:
+        if return_encodings:
             return encodings
 
     def save(self, path=None, directory=None, name=None):
-        assert (path is not None) ^ (directory is not None), \
-            'must specify either output path or output directory.'
+        directory, name = _split_path(path=path, directory=directory, name=name)
+        config_path = os.path.join(directory, f'{name if name else "tokenizer"}.yaml')
 
-        if path:
-            directory = os.path.join(*os.path.split(path)[:-1])
-            name = os.path.split(path)[-1]
+        # saves merges and vocab files
         super().save(directory=directory, name=name)
+
+        # saves configuration file
+        with open(config_path, 'w') as file:
+            yaml.dump(self.config, file, default_flow_style=True)
 
     @staticmethod
     def load(path=None, directory=None, name=None):
-        assert (path is not None) ^ (directory is not None), \
-            'must specify either output path or output directory.'
+        directory, name = _split_path(path=path, directory=directory, name=name)
+        vocab_path = os.path.join(directory, f'{name + "-" if name else ""}vocab.json')
+        merges_path = os.path.join(directory, f'{name + "-" if name else ""}merges.txt')
+        config_path = os.path.join(directory, f'{name + "-" if name else "tokenizer"}.yaml')
 
-        if path:
-            directory = os.path.join(*os.path.split(path)[:-1])
-            name = os.path.split(path)[-1]
-        raise NotImplementedError
+        config = OmegaConf.load(config_path)
+        tokenizer = Tokenizer(vocab_file=vocab_path,
+                              merges_file=merges_path,
+                              **config)
+        return tokenizer
+
+
+def _split_path(path=None, directory=None, name=None):
+    assert (path is not None) ^ (directory is not None), \
+        'must specify either output path or output directory.'
+    if path:
+        directory = os.path.join(*os.path.split(path)[:-1])
+        name = os.path.split(path)[-1]
+    return directory, name

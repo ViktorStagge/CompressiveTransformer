@@ -16,7 +16,7 @@ def get_optimizer(method, **kwargs):
         method = method.lower()
 
     if method in ['adam']:
-        conf = OmegaConf.structured(Adam)
-        conf.update(**kwargs)
-        return optimizers.Adam(**conf)
+        config = OmegaConf.structured(Adam)
+        config.update(**kwargs)
+        return optimizers.Adam(**config)
     return method

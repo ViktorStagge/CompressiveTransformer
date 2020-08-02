@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 
 from typing import Dict, \
-                   Optional
+                   Optional, \
+                   Union
 from preprocess.tokenize import Tokenizer
 
 
 def wma(dataset: pd.DataFrame,
-        tokenizer: Optional[str] = None,
+        tokenizer: Optional[Union[str, Tokenizer]] = None,
         tokenizer_input_paths: Optional[Dict[str, str]] = None,
         tokenizer_output_path: Optional[str] = None,
         train_val_split=0.8,

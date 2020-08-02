@@ -50,6 +50,44 @@ def tokenize(input_paths, output_dir, tokenizer_output_path, **kwargs):
               tokenizer_output_path=tokenizer_output_path)
 
 
+@main_group.command()
+@click.option('--input-dir',
+              'input_dir',
+              help='directory containing input files',
+              required=True,
+              prompt=True)
+@click.option('--tokenizer-output-path',
+              'tokenizer_output_path',
+              help='output path for generated tokenizer',
+              required=True,
+              prompt=True)
+@click.option('--tokens-output-dir',
+              'tokens_output_dir',
+              help='output directory for generated, tokenized files',
+              required=True,
+              prompt=True)
+@click.option('--output-path',
+              'processed_path',
+              help='final output path for the preprocessed data',
+              required=True,
+              prompt=True)
+@click.option('--input-paths',
+              'input_paths',
+              help='(optional) explicitly specify which input files to use',
+              multiple=True)
+@click.option('--vocab-size',
+              'vocab_size',
+              default=30000,
+              help='(optional) maximum vocabulary size used for tokenizer')
+@click.option('--lowercase',
+              'lowercase',
+              default=False,
+              help='(optional) use only lowercase characters for tokenizer')
+def preprocess(**kwargs):
+    from preprocess.dataset import preprocess
+    preprocess(**kwargs)
+
+
 @main_group.group()
 @click.pass_context
 def reformat(*args, **kwargs):
