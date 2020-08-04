@@ -25,7 +25,8 @@ from typing import List
 from model.layers import MultiHeadAttention, \
                          ScaledDotProductAttention, \
                          LayerNormalization, \
-                         ReverseEmbedding
+                         ReverseEmbedding, \
+                         RelativeEncoding
 from model.layers.attention import ContentBasedAttention_CT, \
                                    content_based_attention
 from model.optimizers import get_optimizer
@@ -152,9 +153,14 @@ class CompressiveTransformer(Model):
         embedding_layer = Embedding(input_dim=vocab_size,
                                     output_dim=d_model,
                                     embeddings_initializer='uniform',
-                                    name='h_L0')
-        e = embedding_layer(x)
-        # # TODO: h = h_token + h_pos
+                                    name='word_embedding')
+        e_w = embedding_layer(x)
+
+        e_r = RelativeEncoding(batch_size=batch_size,
+                               verbose=True,
+                               name='relative_encoding')(e_w)
+
+        e = Add(name='h_L0')([e_w, e_r])
         h = Dropout(rate=dropout_probability, name='dropout_embedding')(e)
 
         _hs = []
