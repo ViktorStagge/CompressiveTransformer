@@ -30,6 +30,7 @@ from model.layers import MultiHeadAttention, \
 from model.layers.attention import ContentBasedAttention_CT, \
                                    content_based_attention
 from model.optimizers import get_optimizer
+from config.default import default_config as config
 
 
 def naive_multiehead_model(d_heads=2,
@@ -127,6 +128,7 @@ class CompressiveTransformer(Model):
                  vocab_size=20000,
                  output_size=None,
                  dropout_probability=0.1,
+                 use_relative_encoding=None,
                  name='CompressiveTransformer',
                  **kwargs):
         assert memory_size >= sequence_length, \
@@ -139,6 +141,8 @@ class CompressiveTransformer(Model):
             d_k = d_model  # // d_heads
         if d_mlp_hidden is None:
             d_mlp_hidden = d_model
+        if use_relative_encoding is None:
+            use_relative_encoding = config.feature_relative_encoding
         memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
         compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
@@ -156,11 +160,14 @@ class CompressiveTransformer(Model):
                                     name='word_embedding')
         e_w = embedding_layer(x)
 
-        e_r = RelativeEncoding(batch_size=batch_size,
-                               verbose=True,
-                               name='relative_encoding')(e_w)
+        if use_relative_encoding:
+            e_r = RelativeEncoding(batch_size=batch_size,
+                                   verbose=True,
+                                   name='relative_encoding')(e_w)
 
-        e = Add(name='h_L0')([e_w, e_r])
+            e = Add(name='h_L0')([e_w, e_r])
+        else:
+            e = e_w
         h = Dropout(rate=dropout_probability, name='dropout_embedding')(e)
 
         _hs = []
