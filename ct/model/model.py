@@ -358,7 +358,8 @@ class AttentionReconstruction(Model):
         h = Input(batch_shape=h_shape, name='ar_h')
         old_mem = Input(batch_shape=old_mem_shape, name='ar_old_mem')
 
-        output, output_layer, hidden_layers = self._create_reconstruction_layers(compression=compression,
+        output, output_layer, hidden_layers = self._create_reconstruction_layers(old_mem=old_mem,
+                                                                                 compression=compression,
                                                                                  compression_rate=compression_rate,
                                                                                  **kwargs)
 
@@ -372,6 +373,9 @@ class AttentionReconstruction(Model):
         self.verbose = verbose
         self._custom_layers = dict(output=output_layer,
                                    hidden_layers=hidden_layers)
+        self.h_shape = h_shape
+        self.old_mem_shape = old_mem_shape
+        self.batch_loss = None
         if verbose:
             print(self.summary())
 
@@ -410,33 +414,28 @@ class AttentionReconstruction(Model):
             return (y_true - y_pred) ** 2
 
         def _attention_reconstruction_loss(y_true, y_pred):
+            loss = None
             if self.verbose:
-                print('Calculating Attention Reconstruction loss:')
+                print('Creating attention reconstruction loss:')
 
-            loss = 0
             for head, h, old_mem, new_cm in zip(self.heads,
                                                 self._current_batch['h'],
                                                 self._current_batch['old_mem'],
                                                 self._current_batch['new_cm']):
-                print(h, old_mem, head.w_q, head.w_k, head.w_v, '\n', sep='\n')
-                h = K.eval(h)
-                old_mem = K.eval(old_mem)
-                new_cm = K.eval(new_cm)
-                w_q = K.eval(head.w_q)
-                w_k = K.eval(head.w_k)
-                w_v = K.eval(head.w_v)
+                if self.verbose:
+                    print(h, old_mem, head.w_q, head.w_k, head.w_v, '\n', sep='\n')
 
-                old_attention = content_based_attention(h=h, m=old_mem, w_q=w_q, w_k=w_k, w_v=w_v)
-                new_attention = content_based_attention(h=h, m=new_cm, w_q=w_q, w_k=w_k, w_v=w_v)
+                old_attention = content_based_attention(h=h, m=old_mem, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
+                new_attention = content_based_attention(h=h, m=new_cm, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
 
                 loss_head = (old_attention - new_attention)
-                if self.verbose:
-                    print(f' loss={loss_head}')
-                loss += loss_head
+                if loss is None:
+                    loss = loss_head
+                else:
+                    loss += loss_head
 
-            if self.verbose:
-                print(f'total loss={loss}')
             return loss
+
         return _attention_reconstruction_loss
 
     @staticmethod

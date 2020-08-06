@@ -226,26 +226,29 @@ class ContentBasedAttention(Layer):
         return input_shape
 
 
-def content_based_attention_keras(h, m, w_q, w_k, w_v):
-    if isinstance(w_q, list) or isinstance(w_k, list) or isinstance(w_v, list):
-        raise NotImplementedError('multiple heads will be implemented soon. For now pass one head per layer.')
+def content_based_attention(h, m, w_q, w_k, w_v, normalize=False, d_k=None):
+    hq = K.dot(h, w_q)
+    mk = K.dot(m, w_k)
+    mv = K.dot(m, w_v)
 
-    hQ = K.dot(h, w_k)
-    mK = K.dot(m, w_k)
-    mV = K.dot(m, w_v)
+    if len(mk.shape) == 3:
+        mk_transpose = K.permute_dimensions(mk, pattern=(0, 2, 1))
+    else:
+        raise NotImplementedError('expected 3 dimensions')
 
-    z = K.batch_dot(hQ, mK)
+    z = K.batch_dot(hq, mk_transpose)
+    if normalize:
+        z = z / np.sqrt(d_k)
     z = K.softmax(z)
-    y = K.batch_dot(z, mV)
-
+    y = K.batch_dot(z, mv)
     return y
 
 
-def content_based_attention(h: np.ndarray,
-                            m: np.ndarray,
-                            w_q: np.ndarray,
-                            w_k: np.ndarray,
-                            w_v: np.ndarray):
+def content_based_attention_numpy(h: np.ndarray,
+                                  m: np.ndarray,
+                                  w_q: np.ndarray,
+                                  w_k: np.ndarray,
+                                  w_v: np.ndarray):
     from scipy.special import softmax
 
     hQ = np.dot(h, w_q)
