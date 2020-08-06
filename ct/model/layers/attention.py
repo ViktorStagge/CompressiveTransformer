@@ -226,7 +226,7 @@ class ContentBasedAttention(Layer):
         return input_shape
 
 
-def content_based_attention(h, m, w_q, w_k, w_v):
+def content_based_attention_keras(h, m, w_q, w_k, w_v):
     if isinstance(w_q, list) or isinstance(w_k, list) or isinstance(w_v, list):
         raise NotImplementedError('multiple heads will be implemented soon. For now pass one head per layer.')
 
@@ -237,6 +237,24 @@ def content_based_attention(h, m, w_q, w_k, w_v):
     z = K.batch_dot(hQ, mK)
     z = K.softmax(z)
     y = K.batch_dot(z, mV)
+
+    return y
+
+
+def content_based_attention(h: np.ndarray,
+                            m: np.ndarray,
+                            w_q: np.ndarray,
+                            w_k: np.ndarray,
+                            w_v: np.ndarray):
+    from scipy.special import softmax
+
+    hQ = np.dot(h, w_q)
+    mK = np.dot(m, w_k)
+    mV = np.dot(m, w_v)
+
+    z = np.tensordot(hQ, mK, axes=(0, 1))
+    z = softmax(z, axis=-1)
+    y = np.tensordot(z, mV, axes=(0, 1))
 
     return y
 

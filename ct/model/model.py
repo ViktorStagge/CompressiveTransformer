@@ -1,36 +1,27 @@
 import warnings
-import numpy as np
+from typing import List
 
-from keras import activations
-from keras import regularizers
-from keras import callbacks
+import numpy as np
 from keras import backend as K
-from keras.models import Model
-from keras.models import Sequential as SequentialModel
 from keras.layers import Embedding, \
-                         LSTM, \
                          Dense, \
                          Dropout, \
                          Flatten, \
                          Input, \
                          Conv1D, \
                          Add, \
-                         Reshape, \
                          Lambda, \
                          concatenate as Concatenate
-from omegaconf import OmegaConf
-from typing import List
+from keras.models import Model
 
-
+from config.default import default_config as config
 from model.layers import MultiHeadAttention, \
                          ScaledDotProductAttention, \
                          LayerNormalization, \
                          ReverseEmbedding, \
                          RelativeEncoding
-from model.layers.attention import ContentBasedAttention_CT, \
-                                   content_based_attention
+from model.layers.attention import content_based_attention
 from model.optimizers import get_optimizer
-from config.default import default_config as config
 
 
 def naive_multiehead_model(d_heads=2,
@@ -218,7 +209,8 @@ class CompressiveTransformer(Model):
                          name=name,
                          **kwargs)
 
-        # Attention Reconstruction Model (Model for compressing memory)
+        # Attention Reconstruction Model (Model for compressing memory).
+        self.reconstruction_models = None
         # Memory
         self.memory = memory
         self.compressed_memory = compressed_memory
@@ -346,7 +338,6 @@ _all_compressions = _max_pool[:1] + _1d_conv[:1]
 
 
 class AttentionReconstruction(Model):
-
     def __init__(self,
                  input_shape,
                  heads,
@@ -367,21 +358,9 @@ class AttentionReconstruction(Model):
         h = Input(batch_shape=h_shape, name='ar_h')
         old_mem = Input(batch_shape=old_mem_shape, name='ar_old_mem')
 
-        if compression in _max_pool:
-            raise NotImplementedError()
-        elif compression in _1d_conv:
-            filters = kwargs.get('conv_filters', 128)
-            activation = kwargs.get('conv_activation', 'relu')
-
-            output_layer = Conv1D(filters=filters,
-                                  kernel_size=compression_rate,
-                                  strides=compression_rate,
-                                  activation=activation,
-                                  name='ar_conv1D')
-            output = output_layer(old_mem)
-        else:
-            raise ValueError(f'unsupported compression: {compression}. '
-                             f'Select one from {_all_compressions}')
+        output, output_layer, hidden_layers = self._create_reconstruction_layers(compression=compression,
+                                                                                 compression_rate=compression_rate,
+                                                                                 **kwargs)
 
         super().__init__(*args, inputs=[h, old_mem], outputs=output, name=name, **kwargs)
         self.heads = heads
@@ -391,8 +370,8 @@ class AttentionReconstruction(Model):
                                    old_mem=[old_mem],
                                    new_cm=[output])
         self.verbose = verbose
-        self._custom_layers = dict(output=output_layer)
-
+        self._custom_layers = dict(output=output_layer,
+                                   hidden_layers=hidden_layers)
         if verbose:
             print(self.summary())
 
@@ -427,32 +406,59 @@ class AttentionReconstruction(Model):
 
     def attention_reconstruction_loss(self):
 
-        def _attention_reconstruction_loss(y_true, y_pred):
-            # assert len(self.heads) == 1
-            # assert len(self._current_batch_old_mem) == 1
-            # assert len(self._current_batch_new_cm) == 1
-            # print('   calculating loss...')
+        def _mock_attention_reconstruction_loss(y_true, y_pred):
             return (y_true - y_pred) ** 2
 
-        #             for head, h, old_mem, new_cm in zip(self.heads,
-        #                                                 self._current_batch['h'],
-        #                                                 self._current_batch['old_mem'],
-        #                                                 self._current_batch['new_cm']):
-        #                 print(h, old_mem, head.w_q, head.w_k, head.w_v, sep='\n')
-        #                 old_attention = content_based_attention(h=h, m=old_mem, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
-        #                 new_attention = content_based_attention(h=h, m=new_cm, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
-        #                 loss_head = (old_attention - new_attention)
+        def _attention_reconstruction_loss(y_true, y_pred):
+            if self.verbose:
+                print('Calculating Attention Reconstruction loss:')
 
-        #                 loss += loss_head
+            loss = 0
+            for head, h, old_mem, new_cm in zip(self.heads,
+                                                self._current_batch['h'],
+                                                self._current_batch['old_mem'],
+                                                self._current_batch['new_cm']):
+                print(h, old_mem, head.w_q, head.w_k, head.w_v, '\n', sep='\n')
+                h = K.eval(h)
+                old_mem = K.eval(old_mem)
+                new_cm = K.eval(new_cm)
+                w_q = K.eval(head.w_q)
+                w_k = K.eval(head.w_k)
+                w_v = K.eval(head.w_v)
 
-        #             print((y_true - y_pred).shape)
-        #             print(self._current_batch['h'][0])
-        #             # # works
-        #             # return y_true - y_pred
-        #             return y_true - self._current_batch['new_cm'][0]
+                old_attention = content_based_attention(h=h, m=old_mem, w_q=w_q, w_k=w_k, w_v=w_v)
+                new_attention = content_based_attention(h=h, m=new_cm, w_q=w_q, w_k=w_k, w_v=w_v)
 
-        #             # # doesn't work
-        #             # return K.zeros(shape=y_pred.shape)
+                loss_head = (old_attention - new_attention)
+                if self.verbose:
+                    print(f' loss={loss_head}')
+                loss += loss_head
 
+            if self.verbose:
+                print(f'total loss={loss}')
+            return loss
         return _attention_reconstruction_loss
 
+    @staticmethod
+    def _create_reconstruction_layers(*,
+                                      old_mem: Input,
+                                      compression: str,
+                                      compression_rate: int,
+                                      **kwargs):
+        if compression in _max_pool:
+            raise NotImplementedError()
+        elif compression in _1d_conv:
+            filters = kwargs.get('conv_filters', 128)
+            activation = kwargs.get('conv_activation', 'relu')
+
+            output_layer = Conv1D(filters=filters,
+                                  kernel_size=compression_rate,
+                                  strides=compression_rate,
+                                  activation=activation,
+                                  name='ar_conv1D')
+            output = output_layer(old_mem)
+            hidden_layers = {}
+        else:
+            raise ValueError(f'unsupported compression: {compression}. '
+                             f'Select one from {_all_compressions}')
+        return output, output_layer, hidden_layers

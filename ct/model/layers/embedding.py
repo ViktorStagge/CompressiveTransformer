@@ -96,32 +96,32 @@ class RelativeEncoding(Layer):
         return input_shape
 
     def create_positional_encodings(self):
-        embedding = [PE(pos, l, self.d_model) for pos, l in itertools.product(range(self.sequence_length),
-                                                                              range(self.d_model))]
-        embedding = np.array(embedding)
-        embedding = embedding.reshape((self.sequence_length, self.d_model))
-        return embedding
+        encoding = [PE(pos, l, self.d_model) for pos, l in itertools.product(range(self.sequence_length),
+                                                                             range(self.d_model))]
+        encoding = np.array(encoding)
+        encoding = encoding.reshape((self.sequence_length, self.d_model))
+        return encoding
 
     def create_relative_encodings(self):
-        embeddings = self.create_positional_encodings()
-        embeddings = np.tile(embeddings, (self.batch_size, 1, 1))
-        # embeddings = K.variable(embeddings)
-        # embeddings._trainable = False
-        return embeddings
+        encoding = self.create_positional_encodings()
+        encoding = np.tile(encoding, (self.batch_size, 1, 1))
+        # encoding = K.variable(encoding)
+        # encoding._trainable = False
+        return encoding
 
-    def relative_embedding(self,
-                           i: int,
-                           j: int):
-        assert self.embeddings is not None, \
+    def relative_encoding(self,
+                          i: int,
+                          j: int):
+        assert self.encodings is not None, \
             'build the Positional Encoding layer before using it'
         delta = i - j
         delta = max(0, min(self.sequence_length, delta))
 
-        return self.embeddings[delta]
+        return self.encodings[delta]
 
 
 def PE(pos, l, max_dimension):
-    """Positional Embedding
+    """Positional Encoding
 
     Arguments:
         pos: position in the sequence
