@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 
 from keras import layers
@@ -15,19 +16,22 @@ _default = OmegaConf.create(dict(d_k=64,
 
 
 class ScaledDotProductAttention(Layer):
-    def __init__(self, d_k=None, d_v=None, d_model=None, verbose=False, **kwargs):
+    def __init__(self, d_k=None, d_q=None, d_v=None, d_model=None, verbose=False, **kwargs):
         if verbose:
             print(f'#### INIT [{self.__class__.__name__}] ####')
+        if d_k != d_q:
+            warnings.warn('using different dimensions for `keys` [d_k] and `queries` [d_q]. '
+                          'Functionality is not tested.')
         super().__init__(**kwargs)
 
+        self.verbose = verbose
         self.d_model = d_model or _default.d_model
         self.d_k = d_k or _default.d_k
-        self.d_q = self.d_k
+        self.d_q = d_q or self.d_k
         self.d_v = d_v or _default.d_v
         self.w_q = None
         self.w_k = None
         self.w_v = None
-        self.verbose = verbose
 
     def build(self, input_shape):
         if self.verbose:
@@ -130,6 +134,15 @@ class ScaledDotProductAttention(Layer):
             print(f'   compute_output_shape: {output_shape}')
         return output_shape
 
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(d_model=self.d_model,
+                           d_k=self.d_k,
+                           d_q=self.d_q,
+                           d_v=self.d_v,
+                           verbose=self.verbose))
+        return config
+
 
 class MultiHeadAttention(Layer):
     def __init__(self,
@@ -142,14 +155,14 @@ class MultiHeadAttention(Layer):
                  **kwargs):
         super().__init__(**kwargs)
 
+        self.verbose = verbose
         self.d_heads = d_heads or _default.d_heads
+        self.d_model = d_model or _default.d_model
         self.d_k = d_k or _default.d_k
         self.d_q = self.d_k
         self.d_v = d_v or _default.d_v
-        self.d_model = d_model or _default.d_model
         self.sequence_length = sequence_length or self.d_model
         self.w_o = None
-        self.verbose = verbose
 
     def build(self, input_shape):
         assert isinstance(input_shape, list), \
@@ -190,6 +203,17 @@ class MultiHeadAttention(Layer):
         assert head_shape[2] == self.d_v
 
         return None, self.sequence_length, self.d_model
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(d_heads=self.d_heads,
+                           d_model=self.d_model,
+                           sequence_length=self.sequence_length,
+                           d_k=self.d_k,
+                           d_q=self.d_q,
+                           d_v=self.d_v,
+                           verbose=self.verbose))
+        return config
 
 
 class ContentBasedAttention(Layer):

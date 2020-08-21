@@ -51,3 +51,10 @@ class LayerNormalization(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(use_gain=self.use_gain,
+                           use_bias=self.use_bias,
+                           verbose=self.verbose))
+        return config

@@ -1,5 +1,6 @@
 import warnings
-from typing import List
+from typing import List, \
+                   Dict
 
 import numpy as np
 from keras import backend as K
@@ -122,6 +123,10 @@ class CompressiveTransformer(Model):
                  use_relative_encoding=None,
                  name='CompressiveTransformer',
                  **kwargs):
+        if 'inputs' in kwargs and 'outputs' in kwargs:
+            # assume the CompressiveTransformer is created from the classmethod `from_config` during keras.model.load
+            super().__init__(**kwargs)
+            return
         assert memory_size >= sequence_length, \
             'Memory has to be longer than the sequence length'
         assert compressed_memory_size >= sequence_length // compression_rate, \
@@ -156,10 +161,10 @@ class CompressiveTransformer(Model):
                                    verbose=True,
                                    name='relative_encoding')(e_w)
 
-            e = Add(name='h_L0')([e_w, e_r])
+            e = Add(name='total_embedding')([e_w, e_r])
         else:
             e = e_w
-        h = Dropout(rate=dropout_probability, name='dropout_embedding')(e)
+        h = Dropout(rate=dropout_probability, name='h_L0')(e)
 
         _hs = []
         _sdpa_layers = []
@@ -211,6 +216,7 @@ class CompressiveTransformer(Model):
 
         # Attention Reconstruction Model (Model for compressing memory).
         self.reconstruction_models = None
+        self._loss_ar_batch = 0
         # Memory
         self.memory = memory
         self.compressed_memory = compressed_memory
@@ -238,7 +244,7 @@ class CompressiveTransformer(Model):
     def _create_reconstruction_models_(self):
         self.reconstruction_models = [AttentionReconstruction(input_shape=[self._h[i].shape,
                                                                            self._h[i].shape],
-                                                              heads=self._sdpa_layers[i][:1],
+                                                              d_heads=self._sdpa_layers[i][:1],
                                                               compression_rate=self.compression_rate)
                                       for i in range(self.d_layers)]
 
@@ -247,18 +253,26 @@ class CompressiveTransformer(Model):
                 loss=None,
                 metrics=None,
                 loss_weights=None,
+                metrics_reconstruction_loss=True,
                 reconstruction_optimizer='Adam',
                 reconstruction_metrics=None,
+                force_recompile=False,
                 **kwargs):
+        if metrics is None:
+            metrics = []
+        if metrics_reconstruction_loss:
+            metrics += [self.attention_reconstruction_loss()]
+
         super().compile(optimizer=get_optimizer(optimizer),
                         loss=loss,
                         metrics=metrics,
                         loss_weights=loss_weights,
                         **kwargs)
-        self._create_reconstruction_models_()
-        for reconstruction_model in self.reconstruction_models:
-            reconstruction_model.compile(optimizer=reconstruction_optimizer,
-                                         metrics=reconstruction_metrics)
+        if self.reconstruction_models is None or force_recompile:
+            self._create_reconstruction_models_()
+            for reconstruction_model in self.reconstruction_models:
+                reconstruction_model.compile(optimizer=reconstruction_optimizer,
+                                             metrics=reconstruction_metrics)
 
     def train_on_batch(self,
                        x,
@@ -294,7 +308,10 @@ class CompressiveTransformer(Model):
                                                            y=_ncm,
                                                            sample_weight=sample_weight,
                                                            reset_metrics=reset_metrics)
+
         loss_ar = loss_ar / max(1, self.d_layers)
+        # K.set_value(self._loss_ar_batch, loss_ar / max(1, self.d_layers))
+        self._loss_ar_batch += 1
         return loss  # , loss_ar
 
     def summary(self, line_length=None, positions=None, print_fn=None):
@@ -331,6 +348,99 @@ class CompressiveTransformer(Model):
 
         return old_mem, new_cm
 
+    def attention_reconstruction_loss(self):
+        def _attention_reconstruction_loss(y_true, y_pred):
+            return self._loss_ar_batch
+        return _attention_reconstruction_loss
+
+    def get_config(self):
+        config = super().get_config()
+        # config['attention_reconstruction_models'] = [ar_model.get_config() for ar_model in self.reconstruction_models]
+        # AR config is passed to compile - not __init__ (side-step tracking).
+        # Handle in CompressiveTransformer.from_config()
+        config.update(dict(attributes=dict(_loss_ar_batch=self._loss_ar_batch,
+                                           memory=self.memory,
+                                           compressed_memory=self.compressed_memory,
+                                           sequence_length=self.sequence_length,
+                                           memory_size=self.memory_size,
+                                           compressed_memory_size=self.compressed_memory_size,
+                                           compressed_sequence_length=self.compressed_sequence_length,
+                                           batch_size=self.batch_size,
+                                           vocab_size=self.vocab_size,
+                                           d_layers=self.d_layers,
+                                           d_model=self.d_model,
+                                           d_heads=self.d_heads,
+                                           d_k=self.d_k,
+                                           d_mlp_hidden=self.d_mlp_hidden,
+                                           n_reconstruction_models=len(self.reconstruction_models) \
+                                               if hasattr(self, 'reconstruction_models') else None)))
+
+        return config
+
+    @classmethod
+    def from_config(cls, config, custom_objects=None):
+        assert 'attributes' in config, \
+            f'expected `attributes` to be in config. Received: {config.keys()}'
+
+        ct = super(CompressiveTransformer, cls).from_config(config=config, custom_objects=custom_objects)
+
+        for attribute, value in config['attributes'].items():
+            ct.__setattr__(attribute, value)
+
+        ct._assign_layers_as_attributes_()
+        ct._assign_reconstruction_models_()
+
+        return ct
+
+    def _assign_layers_as_attribtues_(self):
+        self._hs = [layer.output for layer in self.layers if layer.name.startswith("h_L")]
+
+        _sdpa_layers = [layer.output for layer in self.layers if layer.name.startswith('scaled_dot_product_attention')]
+        self._sdpa_layers = [_sdpa_layers[i:i+self.d_heads] for i in range(0, len(_sdpa_layers), self.d_heads)]
+
+    def _assign_reconstruction_models_(self):
+        self.__setattr__('reconstruction_models', None)
+
+    def save(self,
+             filepath: str,
+             overwrite: bool = True,
+             include_optimizer: bool = True):
+        super().save(filepath=filepath,
+                     overwrite=overwrite,
+                     include_optimizer=include_optimizer)
+        for i, reconstruction_model in enumerate(self.reconstruction_models):
+            ar_filepath = filepath + f'.ar_model_{i}.h5'
+            reconstruction_model.save(ar_filepath,
+                                      overwrite=overwrite,
+                                      include_optimizer=include_optimizer)
+
+    @staticmethod
+    def load_model(filepath, custom_objects=None, compile=True):
+        from keras.models import load_model
+        if custom_objects is None:
+            custom_objects = {'CompressiveTransformer': CompressiveTransformer,
+                              'RelativeEncoding': RelativeEncoding,
+                              'ScaledDotProductAttention': ScaledDotProductAttention,
+                              'MultiHeadAttention': MultiHeadAttention,
+                              'LayerNormalization': LayerNormalization,
+                              'ReverseEmbedding': ReverseEmbedding,
+                              'AttentionReconstruction': AttentionReconstruction}
+
+        ct = load_model(filepath, custom_objects=custom_objects, compile=compile)
+
+        if compile:
+            reconstruction_models = []
+            for i in range(ct.n_reconstruction_models):
+                ar_filepath = filepath + f'.ar_model_{i}.h5'
+                try:
+                    ar_model = load_model(ar_filepath, custom_objects=custom_objects, compile=True)
+                    reconstruction_models.append(ar_model)
+                except Exception:
+                    raise IOError(f'failed to load reconstruction model at filepath: {ar_filepath}')
+            ct.__setattr__('reconstruction_models', reconstruction_models)
+
+        return ct
+
 
 _max_pool = ['max-pool', 'max_pool', 'max pool', 'max']
 _1d_conv = ['1d-conv', '1d_conv', '1d conv', 'conv']
@@ -340,15 +450,15 @@ _all_compressions = _max_pool[:1] + _1d_conv[:1]
 class AttentionReconstruction(Model):
     def __init__(self,
                  input_shape,
-                 heads,
+                 d_heads,
                  *args,
                  compression='1d-conv',
                  compression_rate=3,
                  name='AttentionReconstruction',
                  verbose=False,
                  **kwargs):
-        assert isinstance(heads, list)
-        if len(heads) > 1:
+        assert isinstance(d_heads, list)
+        if len(d_heads) > 1:
             raise NotImplementedError()
         # heads
 
@@ -364,7 +474,7 @@ class AttentionReconstruction(Model):
                                                                                  **kwargs)
 
         super().__init__(*args, inputs=[h, old_mem], outputs=output, name=name, **kwargs)
-        self.heads = heads
+        self.d_heads = d_heads
         self.compression = compression
         self.compression_rate = compression_rate
         self._current_batch = dict(h=[h],
@@ -418,7 +528,7 @@ class AttentionReconstruction(Model):
             if self.verbose:
                 print('Creating attention reconstruction loss:')
 
-            for head, h, old_mem, new_cm in zip(self.heads,
+            for head, h, old_mem, new_cm in zip(self.d_heads,
                                                 self._current_batch['h'],
                                                 self._current_batch['old_mem'],
                                                 self._current_batch['new_cm']):
@@ -428,11 +538,11 @@ class AttentionReconstruction(Model):
                 old_attention = content_based_attention(h=h, m=old_mem, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
                 new_attention = content_based_attention(h=h, m=new_cm, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
 
-                loss_head = (old_attention - new_attention)
+                layer_loss = (old_attention - new_attention)
                 if loss is None:
-                    loss = loss_head
+                    loss = layer_loss
                 else:
-                    loss += loss_head
+                    loss += layer_loss
 
             return loss
 
@@ -461,3 +571,26 @@ class AttentionReconstruction(Model):
             raise ValueError(f'unsupported compression: {compression}. '
                              f'Select one from {_all_compressions}')
         return output, output_layer, hidden_layers
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(attributes=dict(d_heads=self.d_heads,
+                                           compression=self.compression,
+                                           compression_rate=self.compression_rate,
+                                           h_shape=self.h_shape,
+                                           old_mem_shape=self.old_mem_shape,
+                                           name=self.name,
+                                           _current_batch=dict(h=None, old_mem=None, new_cm=None),
+                                           verbose=self.verbose)))
+        return config
+
+    @classmethod
+    def from_config(cls, config, custom_objects=None):
+        assert 'attributes' in config, \
+            f'expected `attributes` to be in config. Received: {config.keys()}'
+        reconstruction_model = super(AttentionReconstruction, cls).from_config(config=config,
+                                                                               custom_objects=custom_objects)
+        for attribute, value in config['attributes'].items():
+            reconstruction_model.__setattr__(attribute, value)
+
+        return reconstruction_model

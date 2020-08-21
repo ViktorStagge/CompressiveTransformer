@@ -117,14 +117,14 @@ class Tokenizer(ByteLevelBPETokenizer):
 
         # saves configuration file
         with open(config_path, 'w') as file:
-            yaml.dump(self.config, file, default_flow_style=True)
+            yaml.dump(self.config.pretty(), file, default_flow_style=True)
 
     @staticmethod
     def load(path=None, directory=None, name=None):
         directory, name = _split_path(path=path, directory=directory, name=name)
         vocab_path = os.path.join(directory, f'{name + "-" if name else ""}vocab.json')
         merges_path = os.path.join(directory, f'{name + "-" if name else ""}merges.txt')
-        config_path = os.path.join(directory, f'{name + "-" if name else "tokenizer"}.yaml')
+        config_path = os.path.join(directory, f'{name if name else "tokenizer"}.yaml')
 
         config = OmegaConf.load(config_path)
         tokenizer = Tokenizer(vocab_file=vocab_path,

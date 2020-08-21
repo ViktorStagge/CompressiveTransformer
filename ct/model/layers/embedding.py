@@ -50,7 +50,6 @@ class RelativeEncoding(Layer):
         self.d_model = None
         self.encodings = None
         self.W_kr = None
-        self.v = None
 
     def build(self,
               input_shape: Tuple):
@@ -119,6 +118,21 @@ class RelativeEncoding(Layer):
 
         return self.encodings[delta]
 
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(batch_size=self.batch_size,
+                           # d_model=self.d_model,
+                           # sequence_length=self.sequence_length,
+                           # encodings=self.encodings,
+                           # W_kr=self.W_kr.numpy() if self.W_kr is not None else None,
+                           verbose=self.verbose))
+        return config
+
+    @staticmethod
+    def load(path, compile=True):
+        from keras.models import load_model
+        ct = load_model(path, custom_objects={}, compile=compile)
+        return ct
 
 def PE(pos, l, max_dimension):
     """Positional Encoding
