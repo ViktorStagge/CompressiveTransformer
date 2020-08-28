@@ -122,11 +122,11 @@ class CompressiveTransformer(Model):
                  dropout_probability=0.1,
                  use_relative_encoding=None,
                  name='CompressiveTransformer',
+                 memory=None,
+                 compressed_memory=None,
                  **kwargs):
-        if 'inputs' in kwargs and 'outputs' in kwargs:
-            # assume the CompressiveTransformer is created from the classmethod `from_config` during keras.model.load
-            super().__init__(**kwargs)
-            return
+        assert sequence_length is not None, \
+            'Must provide a sequence length'
         assert memory_size >= sequence_length, \
             'Memory has to be longer than the sequence length'
         assert compressed_memory_size >= sequence_length // compression_rate, \
@@ -139,8 +139,10 @@ class CompressiveTransformer(Model):
             d_mlp_hidden = d_model
         if use_relative_encoding is None:
             use_relative_encoding = config.feature_relative_encoding
-        memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
-        compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
+        if memory is None:
+            memory = np.zeros(shape=(batch_size, d_layers, memory_size, d_model))
+        if compressed_memory is None:
+            compressed_memory = np.zeros(shape=(batch_size, d_layers, compressed_memory_size, d_model))
 
         # Build the internal model structure
         x = Input(shape=(sequence_length,),
@@ -211,8 +213,7 @@ class CompressiveTransformer(Model):
         super().__init__(*args,
                          inputs=[x, x_memory, x_compressed_memory],
                          outputs=outputs,
-                         name=name,
-                         **kwargs)
+                         name=name)
 
         # Attention Reconstruction Model (Model for compressing memory).
         self.reconstruction_models = None
@@ -240,6 +241,8 @@ class CompressiveTransformer(Model):
         self.d_heads = d_heads
         self.d_k = d_k
         self.d_mlp_hidden = d_mlp_hidden
+        self.dropout_probability = dropout_probability
+        self.use_relative_encoding = use_relative_encoding
 
     def _create_reconstruction_models_(self):
         self.reconstruction_models = [AttentionReconstruction(input_shape=[self._h[i].shape,
@@ -358,23 +361,24 @@ class CompressiveTransformer(Model):
         # config['attention_reconstruction_models'] = [ar_model.get_config() for ar_model in self.reconstruction_models]
         # AR config is passed to compile - not __init__ (side-step tracking).
         # Handle in CompressiveTransformer.from_config()
-        config.update(dict(attributes=dict(_loss_ar_batch=self._loss_ar_batch,
-                                           memory=self.memory,
-                                           compressed_memory=self.compressed_memory,
-                                           sequence_length=self.sequence_length,
-                                           memory_size=self.memory_size,
-                                           compressed_memory_size=self.compressed_memory_size,
-                                           compressed_sequence_length=self.compressed_sequence_length,
-                                           batch_size=self.batch_size,
-                                           vocab_size=self.vocab_size,
-                                           d_layers=self.d_layers,
-                                           d_model=self.d_model,
-                                           d_heads=self.d_heads,
-                                           d_k=self.d_k,
-                                           d_mlp_hidden=self.d_mlp_hidden,
-                                           n_reconstruction_models=len(self.reconstruction_models) \
-                                               if hasattr(self, 'reconstruction_models') else None)))
-
+        config.update(attributes=dict(_loss_ar_batch=self._loss_ar_batch,
+                                      memory=self.memory,
+                                      compressed_memory=self.compressed_memory,
+                                      sequence_length=self.sequence_length,
+                                      memory_size=self.memory_size,
+                                      compressed_memory_size=self.compressed_memory_size,
+                                      compression_rate=self.compression_rate,
+                                      compressed_sequence_length=self.compressed_sequence_length,
+                                      batch_size=self.batch_size,
+                                      vocab_size=self.vocab_size,
+                                      d_layers=self.d_layers,
+                                      d_model=self.d_model,
+                                      d_heads=self.d_heads,
+                                      d_k=self.d_k,
+                                      d_mlp_hidden=self.d_mlp_hidden,
+                                      dropout_probability=self.dropout_probability,
+                                      use_relative_encoding=self.use_relative_encoding,
+                                      n_reconstruction_models=self.d_layers))
         return config
 
     @classmethod
@@ -382,24 +386,25 @@ class CompressiveTransformer(Model):
         assert 'attributes' in config, \
             f'expected `attributes` to be in config. Received: {config.keys()}'
 
-        ct = super(CompressiveTransformer, cls).from_config(config=config, custom_objects=custom_objects)
+        config['attributes']['memory'] = np.array(config['attributes']['memory'])
+        config['attributes']['compressed_memory'] = np.array(config['attributes']['compressed_memory'])
 
-        for attribute, value in config['attributes'].items():
-            ct.__setattr__(attribute, value)
-
-        ct._assign_layers_as_attributes_()
-        ct._assign_reconstruction_models_()
+        ct = CompressiveTransformer(**config['attributes'], name=config['name'])
 
         return ct
 
-    def _assign_layers_as_attribtues_(self):
-        self._hs = [layer.output for layer in self.layers if layer.name.startswith("h_L")]
-
-        _sdpa_layers = [layer.output for layer in self.layers if layer.name.startswith('scaled_dot_product_attention')]
-        self._sdpa_layers = [_sdpa_layers[i:i+self.d_heads] for i in range(0, len(_sdpa_layers), self.d_heads)]
-
-    def _assign_reconstruction_models_(self):
-        self.__setattr__('reconstruction_models', None)
+    # def _assign_layers_as_attribtues_(self):
+    #     self._hs = [layer.output for layer in self.layers if layer.name.startswith("h_L")]
+    #
+    #     _sdpa_layers = [layer.output for layer in self.layers if layer.name.startswith('scaled_dot_product_attention')]
+    #     self._sdpa_layers = [_sdpa_layers[i:i+self.d_heads] for i in range(0, len(_sdpa_layers), self.d_heads)]
+    #
+    #     embedding_layer = self.get_layer(name='word_embedding')
+    #     reverse_embedding_layer = self.get_layer('output')
+    #     reverse_embedding_layer._update_embedding_layer(embedding_layer)
+    #
+    # def _assign_reconstruction_models_(self):
+    #     self.__setattr__('reconstruction_models', None)
 
     def save(self,
              filepath: str,
@@ -409,13 +414,15 @@ class CompressiveTransformer(Model):
                      overwrite=overwrite,
                      include_optimizer=include_optimizer)
         for i, reconstruction_model in enumerate(self.reconstruction_models):
-            ar_filepath = filepath + f'.ar_model_{i}.h5'
-            reconstruction_model.save(ar_filepath,
-                                      overwrite=overwrite,
-                                      include_optimizer=include_optimizer)
+            filepath_ar_state = f'{filepath}.ar_model_state_{i}.pkl'
+            reconstruction_model.save_state(filepath_ar_state,
+                                            overwrite=overwrite,
+                                            include_optimizer=include_optimizer)
 
     @staticmethod
-    def load_model(filepath, custom_objects=None, compile=True):
+    def load(filepath,
+             custom_objects=None,
+             compile=True):
         from keras.models import load_model
         if custom_objects is None:
             custom_objects = {'CompressiveTransformer': CompressiveTransformer,
@@ -429,15 +436,14 @@ class CompressiveTransformer(Model):
         ct = load_model(filepath, custom_objects=custom_objects, compile=compile)
 
         if compile:
-            reconstruction_models = []
-            for i in range(ct.n_reconstruction_models):
-                ar_filepath = filepath + f'.ar_model_{i}.h5'
+            for i in range(ct.d_layers):
+                filepath_ar_state = f'{filepath}.ar_model_state_{i}.pkl'
                 try:
-                    ar_model = load_model(ar_filepath, custom_objects=custom_objects, compile=True)
-                    reconstruction_models.append(ar_model)
+                    state = AttentionReconstruction.load_state(filepath_ar_state)
                 except Exception:
-                    raise IOError(f'failed to load reconstruction model at filepath: {ar_filepath}')
-            ct.__setattr__('reconstruction_models', reconstruction_models)
+                    raise IOError(f'failed to load reconstruction model at filepath: {filepath_ar_state}')
+
+                ct.reconstruction_models[i].update_state(state)
 
         return ct
 
@@ -451,7 +457,6 @@ class AttentionReconstruction(Model):
     def __init__(self,
                  input_shape,
                  d_heads,
-                 *args,
                  compression='1d-conv',
                  compression_rate=3,
                  name='AttentionReconstruction',
@@ -473,7 +478,9 @@ class AttentionReconstruction(Model):
                                                                                  compression_rate=compression_rate,
                                                                                  **kwargs)
 
-        super().__init__(*args, inputs=[h, old_mem], outputs=output, name=name, **kwargs)
+        super().__init__(inputs=[h, old_mem],
+                         outputs=output,
+                         name=name)
         self.d_heads = d_heads
         self.compression = compression
         self.compression_rate = compression_rate
@@ -574,23 +581,40 @@ class AttentionReconstruction(Model):
 
     def get_config(self):
         config = super().get_config()
-        config.update(dict(attributes=dict(d_heads=self.d_heads,
+        config.update(dict(attributes=dict(input_shape=[list(self.h_shape), list(self.old_mem_shape)],
+                                           d_heads=len(self.d_heads),
                                            compression=self.compression,
                                            compression_rate=self.compression_rate,
-                                           h_shape=self.h_shape,
-                                           old_mem_shape=self.old_mem_shape,
-                                           name=self.name,
+                                           h_shape=list(self.h_shape),
+                                           old_mem_shape=list(self.old_mem_shape),
                                            _current_batch=dict(h=None, old_mem=None, new_cm=None),
                                            verbose=self.verbose)))
         return config
 
-    @classmethod
-    def from_config(cls, config, custom_objects=None):
-        assert 'attributes' in config, \
-            f'expected `attributes` to be in config. Received: {config.keys()}'
-        reconstruction_model = super(AttentionReconstruction, cls).from_config(config=config,
-                                                                               custom_objects=custom_objects)
-        for attribute, value in config['attributes'].items():
-            reconstruction_model.__setattr__(attribute, value)
+    def save_state(self, filepath, overwrite=True, include_optimizer=True):
+        import pickle
+        if not overwrite or not include_optimizer:
+            raise NotImplementedError
 
-        return reconstruction_model
+        state = self.get_state()
+        with open(filepath, 'wb') as file:
+            pickle.dump(state, file)
+        return state
+
+    @classmethod
+    def load_state(cls, filepath):
+        import pickle
+
+        with open(filepath, 'rb') as file:
+            state = pickle.load(file)
+        return state
+
+    def update_state(self, state):
+        self.set_weights(state['weights'])
+        # self.optimizer.set_weights(state['optimizer_weights'])
+
+    def get_state(self):
+        state = dict(weights=self.get_weights(),
+                     optimizer_weights=self.optimizer.get_weights())
+
+        return state

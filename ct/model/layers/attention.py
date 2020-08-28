@@ -16,10 +16,16 @@ _default = OmegaConf.create(dict(d_k=64,
 
 
 class ScaledDotProductAttention(Layer):
-    def __init__(self, d_k=None, d_q=None, d_v=None, d_model=None, verbose=False, **kwargs):
+    def __init__(self,
+                 d_k=None,
+                 d_q=None,
+                 d_v=None,
+                 d_model=None,
+                 verbose=False,
+                 **kwargs):
         if verbose:
             print(f'#### INIT [{self.__class__.__name__}] ####')
-        if d_k != d_q:
+        if d_q not in (d_k, None):
             warnings.warn('using different dimensions for `keys` [d_k] and `queries` [d_q]. '
                           'Functionality is not tested.')
         super().__init__(**kwargs)
@@ -136,11 +142,11 @@ class ScaledDotProductAttention(Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update(dict(d_model=self.d_model,
-                           d_k=self.d_k,
-                           d_q=self.d_q,
-                           d_v=self.d_v,
-                           verbose=self.verbose))
+        config.update(d_model=self.d_model,
+                      d_k=self.d_k,
+                      d_q=self.d_q,
+                      d_v=self.d_v,
+                      verbose=self.verbose)
         return config
 
 
@@ -148,11 +154,15 @@ class MultiHeadAttention(Layer):
     def __init__(self,
                  d_heads=None,
                  d_k=None,
+                 d_q=None,
                  d_v=None,
                  d_model=None,
                  sequence_length=None,
                  verbose=False,
                  **kwargs):
+        if d_q not in (d_k, None):
+            warnings.warn('using different dimensions for `keys` [d_k] and `queries` [d_q]. '
+                          'Functionality is not tested.')
         super().__init__(**kwargs)
 
         self.verbose = verbose
@@ -206,13 +216,13 @@ class MultiHeadAttention(Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update(dict(d_heads=self.d_heads,
-                           d_model=self.d_model,
-                           sequence_length=self.sequence_length,
-                           d_k=self.d_k,
-                           d_q=self.d_q,
-                           d_v=self.d_v,
-                           verbose=self.verbose))
+        config.update(d_heads=self.d_heads,
+                      d_model=self.d_model,
+                      sequence_length=self.sequence_length,
+                      d_k=self.d_k,
+                      d_q=self.d_q,
+                      d_v=self.d_v,
+                      verbose=self.verbose)
         return config
 
 

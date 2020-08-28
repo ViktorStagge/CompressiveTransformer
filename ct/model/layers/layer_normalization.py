@@ -7,7 +7,11 @@ from keras.layers import Layer
 
 class LayerNormalization(Layer):
 
-    def __init__(self, use_bias=True, use_gain=True, verbose=False, **kwargs):
+    def __init__(self,
+                 use_bias=True,
+                 use_gain=True,
+                 verbose=False,
+                 **kwargs):
         self.use_gain = use_gain
         self.use_bias = use_bias
         self.units = None
@@ -54,7 +58,7 @@ class LayerNormalization(Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update(dict(use_gain=self.use_gain,
-                           use_bias=self.use_bias,
-                           verbose=self.verbose))
+        config.update(use_gain=self.use_gain,
+                      use_bias=self.use_bias,
+                      verbose=self.verbose)
         return config

@@ -11,11 +11,15 @@ from keras.layers import Layer
 
 
 class ReverseEmbedding(Layer):
-    def __init__(self, embedding_layer, activation=None, **kwargs):
+    def __init__(self,
+                 embedding_layer=None,
+                 activation=None,
+                 embedding_layer_input_dim=None,
+                 **kwargs):
         super().__init__(**kwargs)
         self.embedding_layer = embedding_layer
-        self.activation = activations.get(activation)
         self.vocab_size = embedding_layer.get_config()['input_dim']
+        self.activation = activations.get(activation)
         self.trainable = False
 
     def build(self, input_shape):
@@ -24,6 +28,8 @@ class ReverseEmbedding(Layer):
     def call(self, inputs, **kwargs):
         assert len(inputs.shape) == 3, \
             'expected 3 dimensions'
+        if self.embedding_layer is None:
+            return inputs
 
         input_emb = inputs[:, -1, :]
         w_transpose = K.transpose(self.embedding_layer.embeddings)
@@ -35,7 +41,12 @@ class ReverseEmbedding(Layer):
         return y
 
     def compute_output_shape(self, input_shape):
-        return input_shape[0], self.embedding_layer.embeddings.shape[0]
+        return input_shape[0], self.embedding_layer.input_dim
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(activation=self.activation)
+        return config
 
 
 class RelativeEncoding(Layer):
@@ -120,12 +131,12 @@ class RelativeEncoding(Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update(dict(batch_size=self.batch_size,
-                           # d_model=self.d_model,
-                           # sequence_length=self.sequence_length,
-                           # encodings=self.encodings,
-                           # W_kr=self.W_kr.numpy() if self.W_kr is not None else None,
-                           verbose=self.verbose))
+        config.update(batch_size=self.batch_size,
+                      # d_model=self.d_model,
+                      # sequence_length=self.sequence_length,
+                      # encodings=self.encodings,
+                      # W_kr=self.W_kr.numpy() if self.W_kr is not None else None,
+                      verbose=self.verbose)
         return config
 
     @staticmethod
@@ -133,6 +144,7 @@ class RelativeEncoding(Layer):
         from keras.models import load_model
         ct = load_model(path, custom_objects={}, compile=compile)
         return ct
+
 
 def PE(pos, l, max_dimension):
     """Positional Encoding
