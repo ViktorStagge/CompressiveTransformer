@@ -1,4 +1,7 @@
 import os
+import warnings
+import numpy as np
+from keras import callbacks
 from keras.callbacks import Callback
 
 
@@ -32,7 +35,6 @@ class SaveModel(Callback):
                  save_every_n_batches=None,
                  overwrite_old_file=True):
         super().__init__()
-
         self.filepath = filepath
         self.overwrite_old_file = overwrite_old_file
 
@@ -40,12 +42,25 @@ class SaveModel(Callback):
             self.on_epoch_end = self._on_epoch_end
 
         if save_every_n_batches:
+            warnings.filterwarnings('ignore',
+                                    category=RuntimeWarning,
+                                    module=callbacks.__name__)
             self.save_every_n_batches = save_every_n_batches
             self.on_batch_end = self._on_batch_end
+
+        directory = os.path.split(filepath)[0]
+        os.makedirs(directory, exist_ok=True)
 
     def _on_epoch_end(self, epoch, logs=None):
         self.model.save(self.filepath, overwrite=self.overwrite_old_file)
 
     def _on_batch_end(self, batch, logs=None):
-        if batch % self.save_every_n_batches == 0:
+        if batch % self.save_every_n_batches == 0 and batch > 0:
             self.model.save(self.filepath, overwrite=self.overwrite_old_file)
+
+
+class PrintAttentionReconstructionLoss(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        loss = np.mean(self.model._loss_ar_batch)
+        msg = f'----> Epoch {epoch+1}: ar_loss={loss:.4f}'
+        print(msg)

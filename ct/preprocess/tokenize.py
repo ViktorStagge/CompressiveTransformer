@@ -82,19 +82,36 @@ class Tokenizer(ByteLevelBPETokenizer):
                      input_paths=None,
                      input_dir=None,
                      return_encodings=True,
-                     tokens_output_dir=None):
+                     tokens_output_dir=None,
+                     tqdm=None):
+        """Tokenizes the contents of each of the specified input files.
+
+        Arguments:
+            input_paths: explicitly specify which filepaths to read data from
+            input_dir: alternative to input_paths; specify a directory where each file will be used
+            return_encodings: (optional)
+            tokens_output_dir: (optional) saves each tokenized file respectively in tokens_output_dir if provided
+            tqdm: (optional) tqdm type to use, eg. tqdm, or tqdm_notebook
+
+        Returns:
+            encodings [None, encodings]: returns encodings if specified by return_encodings kwarg
+        """
         assert (input_paths is not None) ^ (input_dir is not None), \
             'must specify either input_paths or input_dir to use for tokenization.'
         if input_dir and input_paths is None:
             input_paths = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
+        if tqdm is None:
+            tqdm = iter
 
         encodings = []
-        for path in input_paths:
+        for path in tqdm(input_paths):
             with open(path) as file:
                 text = file.read()
             encoding = self.encode(text)
 
             if tokens_output_dir is not None:
+                os.makedirs(tokens_output_dir, exist_ok=True)
+
                 filename = os.path.split(path)[-1]
                 if filename.endswith('.txt'):
                     filename = filename[:-4]
@@ -111,6 +128,9 @@ class Tokenizer(ByteLevelBPETokenizer):
     def save(self, path=None, directory=None, name=None):
         directory, name = _split_path(path=path, directory=directory, name=name)
         config_path = os.path.join(directory, f'{name if name else "tokenizer"}.yaml')
+
+        # creates directory if needed
+        os.makedirs(directory, exist_ok=True)
 
         # saves merges and vocab files
         super().save(directory=directory, name=name)

@@ -9,5 +9,5 @@ from model import CompressiveTransformer
 
 
 def train(**kwargs):
-    # currently in Jupyter Notebook `Test Compressive Transformer`
+    # currently in Jupyter Notebook `Compressive Transformer on PG19`
     pass

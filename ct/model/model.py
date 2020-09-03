@@ -23,6 +23,7 @@ from model.layers import MultiHeadAttention, \
                          RelativeEncoding
 from model.layers.attention import content_based_attention
 from model.optimizers import get_optimizer
+from model.metrics import AttentionReconstructionMetric
 
 
 def naive_multiehead_model(d_heads=2,
@@ -217,7 +218,7 @@ class CompressiveTransformer(Model):
 
         # Attention Reconstruction Model (Model for compressing memory).
         self.reconstruction_models = None
-        self._loss_ar_batch = 0
+        self._loss_ar_batch = []
         # Memory
         self.memory = memory
         self.compressed_memory = compressed_memory
@@ -264,13 +265,12 @@ class CompressiveTransformer(Model):
         if metrics is None:
             metrics = []
         if metrics_reconstruction_loss:
-            metrics += [self.attention_reconstruction_loss()]
+            metrics += [AttentionReconstructionMetric()]
 
         super().compile(optimizer=get_optimizer(optimizer),
                         loss=loss,
                         metrics=metrics,
-                        loss_weights=loss_weights,
-                        **kwargs)
+                        loss_weights=loss_weights)
         if self.reconstruction_models is None or force_recompile:
             self._create_reconstruction_models_()
             for reconstruction_model in self.reconstruction_models:
@@ -300,24 +300,25 @@ class CompressiveTransformer(Model):
                                       sample_weight=sample_weight,
                                       class_weight=class_weight,
                                       reset_metrics=reset_metrics)
-        
+
         h = K.function(self.input, self._h)(x)
-        
         old_mem, new_cm = self.update_memory(h=h)
-        
+
         loss_ar = 0
         for reconstruction_model, _h, _om, _ncm in zip(self.reconstruction_models, h, old_mem, new_cm):
             loss_ar += reconstruction_model.train_on_batch(x=[_h, _om],
                                                            y=_ncm,
                                                            sample_weight=sample_weight,
                                                            reset_metrics=reset_metrics)
-
         loss_ar = loss_ar / max(1, self.d_layers)
-        # K.set_value(self._loss_ar_batch, loss_ar / max(1, self.d_layers))
-        self._loss_ar_batch += 1
-        return loss  # , loss_ar
+        self._loss_ar_batch.append(loss_ar)
 
-    def summary(self, line_length=None, positions=None, print_fn=None):
+        return loss
+
+    def summary(self,
+                line_length=None,
+                positions=None,
+                print_fn=None):
         super().summary(line_length=line_length,
                         positions=positions,
                         print_fn=print_fn)
@@ -332,14 +333,10 @@ class CompressiveTransformer(Model):
 
     def update_memory(self,
                       h: List[np.ndarray]):
-        # breaks on d_layers > 1
         # breaks on dims Input > 3 ...
         old_mem = self.memory[:, :, :self.sequence_length, :]
         old_mem = [old_mem[:, i, :, :] for i in range(self.d_layers)]
-        
-        # new_cm = [reconstruction_model(inputs=[K.variable(_h), K.variable(_om)])
-        #           for reconstruction_model, _h, _om in zip(self.reconstruction_models, h, old_mem)]
-        # new_cm = [K.eval(_ncm) for _ncm in new_cm]
+
         new_cm = [self.compressed_memory[:, i, :self.compressed_sequence_length, :] for i in range(self.d_layers)]
         
         for i, (_h, _ncm) in enumerate(zip(h, new_cm)):
@@ -351,16 +348,11 @@ class CompressiveTransformer(Model):
 
         return old_mem, new_cm
 
-    def attention_reconstruction_loss(self):
-        def _attention_reconstruction_loss(y_true, y_pred):
-            return self._loss_ar_batch
-        return _attention_reconstruction_loss
-
     def get_config(self):
         config = super().get_config()
         # config['attention_reconstruction_models'] = [ar_model.get_config() for ar_model in self.reconstruction_models]
         # AR config is passed to compile - not __init__ (side-step tracking).
-        # Handle in CompressiveTransformer.from_config()
+        # Handled in CompressiveTransformer.save()
         config.update(attributes=dict(_loss_ar_batch=self._loss_ar_batch,
                                       memory=self.memory,
                                       compressed_memory=self.compressed_memory,
@@ -392,19 +384,6 @@ class CompressiveTransformer(Model):
         ct = CompressiveTransformer(**config['attributes'], name=config['name'])
 
         return ct
-
-    # def _assign_layers_as_attribtues_(self):
-    #     self._hs = [layer.output for layer in self.layers if layer.name.startswith("h_L")]
-    #
-    #     _sdpa_layers = [layer.output for layer in self.layers if layer.name.startswith('scaled_dot_product_attention')]
-    #     self._sdpa_layers = [_sdpa_layers[i:i+self.d_heads] for i in range(0, len(_sdpa_layers), self.d_heads)]
-    #
-    #     embedding_layer = self.get_layer(name='word_embedding')
-    #     reverse_embedding_layer = self.get_layer('output')
-    #     reverse_embedding_layer._update_embedding_layer(embedding_layer)
-    #
-    # def _assign_reconstruction_models_(self):
-    #     self.__setattr__('reconstruction_models', None)
 
     def save(self,
              filepath: str,
@@ -531,10 +510,10 @@ class AttentionReconstruction(Model):
             return (y_true - y_pred) ** 2
 
         def _attention_reconstruction_loss(y_true, y_pred):
-            loss = None
             if self.verbose:
                 print('Creating attention reconstruction loss:')
 
+            layer_losses = []
             for head, h, old_mem, new_cm in zip(self.d_heads,
                                                 self._current_batch['h'],
                                                 self._current_batch['old_mem'],
@@ -545,11 +524,10 @@ class AttentionReconstruction(Model):
                 old_attention = content_based_attention(h=h, m=old_mem, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
                 new_attention = content_based_attention(h=h, m=new_cm, w_q=head.w_q, w_k=head.w_k, w_v=head.w_v)
 
-                layer_loss = (old_attention - new_attention)
-                if loss is None:
-                    loss = layer_loss
-                else:
-                    loss += layer_loss
+                layer_loss = K.sqrt(K.sum((K.square(old_attention - new_attention)), axis=[1, 2]))
+                layer_losses.append(layer_loss)
+
+            loss = K.sum(layer_losses, axis=0)
 
             return loss
 
