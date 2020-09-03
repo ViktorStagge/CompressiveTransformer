@@ -1,0 +1,8 @@
+sphinx >= 3.0
+regex
+omegaconf >= 2.0
+
+sphinxcontrib.katex
+sphinx_rtd_theme
+sphinx-autodoc-typehints
+sphinxcontrib-trio
