@@ -10,6 +10,14 @@ As specified in https://arxiv.org/pdf/1911.05507.pdf. <br>
 
 
 ## Installation:
+As per usual, strongly suggested to create a virtual environment of your liking before installing the dependencies:
+```
+# using Anaconda:
+conda create --name compressive-transformer python=3.8
+source activate compressive-transformer
+```
+
+The required packages can then be installed by running
 ```
 make install
 ```
