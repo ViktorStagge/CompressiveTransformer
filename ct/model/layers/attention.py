@@ -6,7 +6,7 @@ from keras import backend as K
 from keras.layers import Layer
 from omegaconf import OmegaConf
 
-from model.utils import cosine_similarity
+from ct.model.utils import cosine_similarity
 
 
 _default = OmegaConf.create(dict(d_k=64,

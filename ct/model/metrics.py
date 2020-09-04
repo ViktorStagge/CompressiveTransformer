@@ -37,26 +37,23 @@ class CustomMetric(metrics.Metric):
 
 class AttentionReconstructionMetric(CustomMetric):
     def __init__(self,
+                 ct,
                  name='ar_loss',
-                 display_after_each_epoch=True,
                  **kwargs):
         super().__init__(name=name, **kwargs)
         self.loss = self.add_weight(name='_ar_loss',
                                     initializer='zeros')
-        self.loss.assign(12)
-        self.display_after_each_epoch = display_after_each_epoch
+        self.ct = ct
 
     def update_state(self,
                      *args,
-                     ar_loss=0,
                      **kwargs):
-        self.loss.assign_add(ar_loss)
-        self._loss = ar_loss
+        if len(self.ct._loss_ar_batch) > 0:
+            ar_loss = self.ct._loss_ar_batch[-1]
+            self.loss.assign_add(ar_loss)
 
     def result(self):
         return self.loss
 
     def reset_states(self):
-        if not self.display_after_each_epoch:
-            return self.loss.assign(0)
-        self.loss.assign_add(12)
+        self.loss.assign(0)

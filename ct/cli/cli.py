@@ -1,7 +1,8 @@
 import click
-from train import train as _train
-from preprocess import Tokenizer
-from load.wma import wma as load_wma
+
+from ct.train import train as _train
+from ct.preprocess import Tokenizer
+from ct.load.wma import wma as load_wma
 
 
 @click.group()
@@ -12,7 +13,7 @@ def main_group(**kwargs):
 @main_group.command()
 @click.option('--dataset',
               help='specify the dataset to use',
-              default='treebank',
+              default='pg-19',
               show_default=True)
 def train(**kwargs):
     _train(**kwargs)

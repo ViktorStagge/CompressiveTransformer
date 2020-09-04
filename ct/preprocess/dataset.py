@@ -6,7 +6,7 @@ from typing import Optional, \
                    List, \
                    Tuple
 
-from preprocess import Tokenizer
+from ct.preprocess.tokenize import Tokenizer
 
 
 def preprocess(input_dir: str,

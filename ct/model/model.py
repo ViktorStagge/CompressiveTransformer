@@ -15,15 +15,17 @@ from keras.layers import Embedding, \
                          concatenate as Concatenate
 from keras.models import Model
 
-from config.default import default_config as config
-from model.layers import MultiHeadAttention, \
-                         ScaledDotProductAttention, \
-                         LayerNormalization, \
-                         ReverseEmbedding, \
-                         RelativeEncoding
-from model.layers.attention import content_based_attention
-from model.optimizers import get_optimizer
-from model.metrics import AttentionReconstructionMetric
+from ct.config import get_config
+from ct.model.layers import MultiHeadAttention, \
+                            ScaledDotProductAttention, \
+                            LayerNormalization, \
+                            ReverseEmbedding, \
+                            RelativeEncoding
+from ct.model.layers.attention import content_based_attention
+from ct.model.optimizers import get_optimizer
+from ct.model.metrics import AttentionReconstructionMetric
+
+config = get_config()
 
 
 def naive_multiehead_model(d_heads=2,
@@ -106,6 +108,8 @@ class MultiHeadAttentionModel(Model):
 
 
 class CompressiveTransformer(Model):
+    """Compressive Transformer
+    """
     def __init__(self,
                  *args,
                  sequence_length,
@@ -256,21 +260,31 @@ class CompressiveTransformer(Model):
                 optimizer,
                 loss=None,
                 metrics=None,
-                loss_weights=None,
                 metrics_reconstruction_loss=True,
                 reconstruction_optimizer='Adam',
                 reconstruction_metrics=None,
                 force_recompile=False,
                 **kwargs):
+        """Configures the model for training.
+
+        Arguments:
+            optimizer: optimizer to use, default: Adam
+            loss: loss function to use
+            metrics: additional metrics to track, eg. 'accuracy'
+            metrics_reconstruction_loss [bool]: whether to track and display the
+                                                attention reconstruction loss as a metric.
+            reconstruction_optimizer: (optional) optimizer for the AttentionReconstruction models
+            reconstruction_metrics: (optional) additional metrics for the AttentionReconstruction models
+            force_recompile: (optional) ignores whether the model already is compiled, and recompiles it.
+        """
         if metrics is None:
             metrics = []
         if metrics_reconstruction_loss:
-            metrics += [AttentionReconstructionMetric()]
+            metrics += [AttentionReconstructionMetric(ct=self)]
 
         super().compile(optimizer=get_optimizer(optimizer),
                         loss=loss,
-                        metrics=metrics,
-                        loss_weights=loss_weights)
+                        metrics=metrics)
         if self.reconstruction_models is None or force_recompile:
             self._create_reconstruction_models_()
             for reconstruction_model in self.reconstruction_models:
@@ -282,18 +296,18 @@ class CompressiveTransformer(Model):
                        y,
                        sample_weight=None,
                        class_weight=None,
-                       reset_metrics=True):
-        """
+                       reset_metrics=False):
+        """Trains the model for on one batch.
+
         Arguments:
-            x:
-            y:
-            sample_weight:
-            class_weight:
-            reset_metrics:
+            x: input training data
+            y: ground truth for training data
+            sample_weight: (optional) weigh the importance of the samples
+            class_weight: (optional) weight the importance of the different ground truth classes
+            reset_metrics: (optional) resets all metrics before each batch
 
         Returns:
-            loss:
-            loss_ar:
+            loss: the loss for the inputted batch
         """
         loss = super().train_on_batch(x=x,
                                       y=y,
@@ -319,6 +333,8 @@ class CompressiveTransformer(Model):
                 line_length=None,
                 positions=None,
                 print_fn=None):
+        """Prints a summary of the network.
+        """
         super().summary(line_length=line_length,
                         positions=positions,
                         print_fn=print_fn)
@@ -349,6 +365,8 @@ class CompressiveTransformer(Model):
         return old_mem, new_cm
 
     def get_config(self):
+        """Returns the config of the CompressiveTransformer model.
+        """
         config = super().get_config()
         # config['attention_reconstruction_models'] = [ar_model.get_config() for ar_model in self.reconstruction_models]
         # AR config is passed to compile - not __init__ (side-step tracking).
@@ -375,6 +393,8 @@ class CompressiveTransformer(Model):
 
     @classmethod
     def from_config(cls, config, custom_objects=None):
+        """Builds a CompressiveTransformer model from a config.
+        """
         assert 'attributes' in config, \
             f'expected `attributes` to be in config. Received: {config.keys()}'
 
@@ -389,6 +409,20 @@ class CompressiveTransformer(Model):
              filepath: str,
              overwrite: bool = True,
              include_optimizer: bool = True):
+        """Save the Compressive Transformer model to file(s).
+
+        The Compressive Transformer will be saved as a HDF5 file.
+        Each Attention Reconstruction model used by the
+        Compressive Transformer will be saved as an individual state file.
+        The state files will be saved to filepaths which are prefixed
+        by the specified filepath.
+
+        Arguments:
+            filepath: path to save the CompressiveTransformer model to
+            overwrite: forces the file to be overwritten if it already exists.
+            include_optimizer: includes the current state of the CompressiveTransformer
+                               optimizer when saving the model.
+        """
         super().save(filepath=filepath,
                      overwrite=overwrite,
                      include_optimizer=include_optimizer)
@@ -402,6 +436,14 @@ class CompressiveTransformer(Model):
     def load(filepath,
              custom_objects=None,
              compile=True):
+        """Load the CompressiveTransformer from file(s).
+
+        Arguments:
+            filepath: path to load the CompressiveTransformer model from
+            compile: compiles the model immediately after loading, with the state of the saved optimizer
+            custom_objects: (optional) specify additional custom_objects which are required in order to be able
+                                       to load the model using `keras.models.load_model`.
+        """
         from keras.models import load_model
         if custom_objects is None:
             custom_objects = {'CompressiveTransformer': CompressiveTransformer,
@@ -433,6 +475,8 @@ _all_compressions = _max_pool[:1] + _1d_conv[:1]
 
 
 class AttentionReconstruction(Model):
+    """Attention Reconstruction model for compressing the memory of
+    the CompressiveTransformer into a compressed memory"""
     def __init__(self,
                  input_shape,
                  d_heads,
@@ -479,8 +523,14 @@ class AttentionReconstruction(Model):
                 optimizer,
                 loss='attention_reconstruction',
                 metrics=None,
-                loss_weights=None,
                 **kwargs):
+        """Configures the model for training.
+
+        Arguments:
+            optimizer: optimizer to use, default: Adam
+            loss: loss function to use, default: attention_reconstruction as specified by Rae et. al.
+            metrics: additional metrics to track, eg. 'accuracy'
+        """
         if loss == 'attention_reconstruction':
             loss = self.attention_reconstruction_loss()
         else:
@@ -489,10 +539,26 @@ class AttentionReconstruction(Model):
         super().compile(optimizer=optimizer,
                         loss=loss,
                         metrics=metrics,
-                        loss_weights=loss_weights,
                         **kwargs)
 
-    def train_on_batch(self, x, y, sample_weight=None, class_weight=None, reset_metrics=True):
+    def train_on_batch(self,
+                       x,
+                       y,
+                       sample_weight=None,
+                       class_weight=None,
+                       reset_metrics=False):
+        """Trains the model for on one batch.
+
+        Arguments:
+            x: input training data
+            y: ground truth for training data
+            sample_weight: (optional) weigh the importance of the samples
+            class_weight: (optional) weight the importance of the different ground truth classes
+            reset_metrics: (optional) resets all metrics before each batch
+
+        Returns:
+            loss: the loss for the inputted batch
+        """
         self._current_batch['h'] = [x[0]]
         self._current_batch['old_mem'] = [x[1]]
         self._current_batch['new_cm'] = [y]
@@ -505,9 +571,8 @@ class AttentionReconstruction(Model):
         return loss
 
     def attention_reconstruction_loss(self):
-
-        def _mock_attention_reconstruction_loss(y_true, y_pred):
-            return (y_true - y_pred) ** 2
+        """Creates an attention reconstruction loss according to Rae et. al.
+        """
 
         def _attention_reconstruction_loss(y_true, y_pred):
             if self.verbose:
@@ -558,6 +623,8 @@ class AttentionReconstruction(Model):
         return output, output_layer, hidden_layers
 
     def get_config(self):
+        """Returns the config of the AttentionReconstruction model.
+        """
         config = super().get_config()
         config.update(dict(attributes=dict(input_shape=[list(self.h_shape), list(self.old_mem_shape)],
                                            d_heads=len(self.d_heads),
@@ -569,7 +636,18 @@ class AttentionReconstruction(Model):
                                            verbose=self.verbose)))
         return config
 
-    def save_state(self, filepath, overwrite=True, include_optimizer=True):
+    def save_state(self,
+                   filepath,
+                   overwrite=True,
+                   include_optimizer=True):
+        """Saves the state of the AttentionReconstruction model to file.
+
+        Arguments:
+            filepath: path to save the AttentionReconstruction model to
+            overwrite: forces the file to be overwritten if it already exists.
+            include_optimizer: includes the current state of the CompressiveTransformer
+                               optimizer when saving the model.
+        """
         import pickle
         if not overwrite or not include_optimizer:
             raise NotImplementedError
@@ -581,6 +659,8 @@ class AttentionReconstruction(Model):
 
     @classmethod
     def load_state(cls, filepath):
+        """Load the state of the AttentionReconstruction model from file.
+        """
         import pickle
 
         with open(filepath, 'rb') as file:
@@ -588,10 +668,14 @@ class AttentionReconstruction(Model):
         return state
 
     def update_state(self, state):
+        """Updates the AttentionReconstruction model to the specified state.
+        """
         self.set_weights(state['weights'])
         # self.optimizer.set_weights(state['optimizer_weights'])
 
     def get_state(self):
+        """Gets the state of the AttentionReconstruction model.
+        """
         state = dict(weights=self.get_weights(),
                      optimizer_weights=self.optimizer.get_weights())
 

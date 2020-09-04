@@ -1,2 +1,2 @@
-from load.treebank import treebank
-from load.wma import wma as wma
+from ct.load.treebank import treebank
+from ct.load.wma import wma as wma

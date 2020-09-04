@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Dict, \
                    Optional, \
                    Union
-from preprocess.tokenize import Tokenizer
+from ct.preprocess.tokenize import Tokenizer
 
 
 def wma(dataset: pd.DataFrame,
