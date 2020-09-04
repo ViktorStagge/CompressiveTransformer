@@ -67,4 +67,6 @@ class _Config:
 
 
 config = OmegaConf.structured(_Config)
-config.input_paths = [os.path.join(config.input_dir, filename) for filename in os.listdir(config.input_dir)]
+
+if os.path.exists(config.input_dir):
+    config.input_paths = [os.path.join(config.input_dir, filename) for filename in os.listdir(config.input_dir)]
