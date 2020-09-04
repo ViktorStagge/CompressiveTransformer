@@ -2,3 +2,7 @@ omegaconf
 sometimer
 tokenizers
 keras
+tensorflow
+click
+tqdm
+pandas

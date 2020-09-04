@@ -9,6 +9,7 @@ REMOTE_FOLDER=CompressiveTransformer
 
 install:
 	echo "Not Implemented: Installing CompressiveTransformer dependencies"
+	@pip install -r requirements.txt
 
 train:
 	python train.py --kwarg1 something
