@@ -19,7 +19,7 @@ make install
 python ct.py train
 ```
 
-Runtime configurations, for tokenization, model options, etc., can be configured in `ct/config/default.py`. _omegaconf_ is used for configuration.
+Runtime configurations - for tokenization, model options, etc. - can be configured in `ct/config/default.py`. _omegaconf_ is used for configuration.
 
 ## Instructions & Examples
 A simple documentation of the code, together with some additional examples can be found in `docs/build/index.html`.
