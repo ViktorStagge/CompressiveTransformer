@@ -12,6 +12,9 @@ class Adam:
 
 
 def get_optimizer(method, **kwargs):
+    """Retrieves the specified optimizer.
+    Defaults to `Adam` with the parameters as specified by Rae et. al.
+    """
     if isinstance(method, str):
         method = method.lower()
 

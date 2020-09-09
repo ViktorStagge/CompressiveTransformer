@@ -11,8 +11,14 @@ def next_token_batch_generator(*,
                                batch_size,
                                sequence_length,
                                vocab_size):
+    """Creates a generator which returns a batch of data, suitable for using with keras.Model.fit_generator()
+
+    Aligns each sample of the batch so that the latest available token is in the last index of that sample.
+    This is suboptimal in terms of computation. However, using a single entry, and then masking the input for
+    each respective sample would likely cause this framework to almost entirely deviate from the keras structure.
+    """
     assert data is not None or data_path is not None, \
-          'provide either a dataset or a path'
+        'provide either a dataset or a path'
     if data is None:
         data = np.load(data_path)
     if epochs is None:

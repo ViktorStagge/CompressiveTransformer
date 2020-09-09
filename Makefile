@@ -12,7 +12,7 @@ install:
 	@pip install -r requirements.txt
 
 train:
-	python train.py --kwarg1 something
+	python ct.py train
 
 evaluate:
 	@echo "Not implemented"
@@ -27,6 +27,7 @@ remote-sync:
 		--exclude '.git/' \
 		--exclude '.idea/' \
 		--exclude '*.pyc' \
+		--exclude 'docs/build/*' \
 		--include '*.py' \
 		--progress \
 		. \

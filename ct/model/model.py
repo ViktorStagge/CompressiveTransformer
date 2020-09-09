@@ -28,87 +28,15 @@ from ct.model.metrics import AttentionReconstructionMetric
 config = get_config()
 
 
-def naive_multiehead_model(d_heads=2,
-                           d_model=128,
-                           d_k=16,
-                           d_v=128,
-                           input_vocab_size=15000,
-                           input_sequence_length=None,
-                           embedding_size=None,
-                           dense_units=10,
-                           output_size=3):
-    if embedding_size is None:
-        embedding_size = d_model
-    if input_sequence_length is None:
-        input_sequence_length = d_model
-
-    # Embedding
-    input_layer = Input(shape=(input_sequence_length,))
-    _0_x = Embedding(input_dim=input_vocab_size, output_dim=embedding_size)(input_layer)
-
-    # Multi Head Attention
-    _1_s = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model)(_0_x) for _ in range(d_heads)]
-    _1_m = MultiHeadAttention(d_heads=d_heads, d_model=d_model, d_k=d_k, d_v=d_v)(_1_s)
-
-    # Dense
-    _2_f = Flatten()(_1_m)
-    _2_h_0 = Dense(units=dense_units, name='hidden_0')(_2_f)
-    _2_hL_0 = LayerNormalization()(_2_h_0)
-
-    # Dense Output
-    output_layer = Dense(output_size, activation='softmax', name='output_layer')(_2_hL_0)
-
-    #
-    # Compile Model
-    model = Model(inputs=[input_layer],
-                  outputs=[output_layer])
-    model.compile(optimizer='Adam',
-                  loss='categorical_crossentropy',
-                  metrics=['accuracy'])
-    return model
-
-
-class MultiHeadAttentionModel(Model):
-    def __init__(self,
-                 *args,
-                 d_heads=2,
-                 d_model=128,
-                 d_k=16,
-                 d_v=128,
-                 input_vocab_size=15000,
-                 input_sequence_length=None,
-                 embedding_size=None,
-                 dense_units=10,
-                 output_size=3,
-                 **kwargs):
-        if embedding_size is None:
-            embedding_size = d_model
-        if input_sequence_length is None:
-            input_sequence_length = d_model
-        if 'name' not in kwargs:
-            kwargs['name'] = type(MultiHeadAttentionModel).__name__
-
-        # Embedding
-        input_layer = Input(shape=(input_sequence_length,))
-        _0_x = Embedding(input_dim=input_vocab_size, output_dim=embedding_size)(input_layer)
-
-        # Multi Head Attention
-        _1_s = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model)(_0_x) for _ in range(d_heads)]
-        _1_m = MultiHeadAttention(d_heads=d_heads, d_model=d_model, d_k=d_k, d_v=d_v)(_1_s)
-
-        # Dense
-        _2_f = Flatten()(_1_m)
-        _2_h_0 = Dense(units=dense_units, name='hidden_0')(_2_f)
-        _2_hL_0 = LayerNormalization()(_2_h_0)
-
-        # Dense Output
-        output_layer = Dense(output_size, activation='softmax', name='output_layer')(_2_hL_0)
-
-        super().__init__(inputs=[input_layer], outputs=[output_layer], *args, **kwargs)
-
-
 class CompressiveTransformer(Model):
-    """Compressive Transformer
+    """Compressive Transformer as described by Rae et. al.
+
+    Follows the keras Model interface. Due to how keras have chosen to load
+    and save models, the custom `CompressiveTransformer.load` method has to be
+    used when loading a model from disk.
+
+    See `ct.model.callbacks` for relevant callbacks that might make the training
+    of a model a bit easier. Eg. saving the model after each epoch.
     """
     def __init__(self,
                  *args,
@@ -123,7 +51,6 @@ class CompressiveTransformer(Model):
                  d_k=None,
                  d_mlp_hidden=None,  # 3072
                  vocab_size=20000,
-                 output_size=None,
                  dropout_probability=0.1,
                  use_relative_encoding=None,
                  name='CompressiveTransformer',
@@ -136,6 +63,9 @@ class CompressiveTransformer(Model):
             'Memory has to be longer than the sequence length'
         assert compressed_memory_size >= sequence_length // compression_rate, \
             'Compressed memory has to be longer than the compressed sequence length'
+        if batch_size != sequence_length:
+            warnings.warn('batch_size and sequence_length have to be of the same size to '
+                          'correctly train on all data.')
         if d_layers <= 0:
             warnings.warn('d_layers is 0, not using any layers of the Compressive Transformer.')
         if d_k is None:
@@ -349,6 +279,8 @@ class CompressiveTransformer(Model):
 
     def update_memory(self,
                       h: List[np.ndarray]):
+        """Updates the current memory and compressed memory based on the new input, h.
+        """
         # breaks on dims Input > 3 ...
         old_mem = self.memory[:, :, :self.sequence_length, :]
         old_mem = [old_mem[:, i, :, :] for i in range(self.d_layers)]
@@ -680,3 +612,42 @@ class AttentionReconstruction(Model):
                      optimizer_weights=self.optimizer.get_weights())
 
         return state
+
+
+class MultiHeadAttentionModel(Model):
+    def __init__(self,
+                 *args,
+                 d_heads=2,
+                 d_model=128,
+                 d_k=16,
+                 d_v=128,
+                 input_vocab_size=15000,
+                 input_sequence_length=None,
+                 embedding_size=None,
+                 dense_units=10,
+                 output_size=3,
+                 **kwargs):
+        if embedding_size is None:
+            embedding_size = d_model
+        if input_sequence_length is None:
+            input_sequence_length = d_model
+        if 'name' not in kwargs:
+            kwargs['name'] = type(MultiHeadAttentionModel).__name__
+
+        # Embedding
+        input_layer = Input(shape=(input_sequence_length,))
+        _0_x = Embedding(input_dim=input_vocab_size, output_dim=embedding_size)(input_layer)
+
+        # Multi Head Attention
+        _1_s = [ScaledDotProductAttention(d_model=d_model, d_k=d_k, d_v=d_model)(_0_x) for _ in range(d_heads)]
+        _1_m = MultiHeadAttention(d_heads=d_heads, d_model=d_model, d_k=d_k, d_v=d_v)(_1_s)
+
+        # Dense
+        _2_f = Flatten()(_1_m)
+        _2_h_0 = Dense(units=dense_units, name='hidden_0')(_2_f)
+        _2_hL_0 = LayerNormalization()(_2_h_0)
+
+        # Dense Output
+        output_layer = Dense(output_size, activation='softmax', name='output_layer')(_2_hL_0)
+
+        super().__init__(inputs=[input_layer], outputs=[output_layer], *args, **kwargs)

@@ -13,8 +13,15 @@ from ct.model.callbacks import ClearCompressedMemory, \
 from ct.train.generators import next_token_batch_generator
 
 
-def train(config_path='default',
+def train(config_path: str = 'default',
           **kwargs):
+    """Trains a CompressiveTransformer model on the config-specified dataset.
+
+    Optionally Tokenizes and restructures the input data to be used with a batch generator.
+    Any additional preprocessing (removal of certain words, replacement of words, etc.)
+    ought to be done beforehand if required using a custom preprocess.initial_cleanup for each
+    respective dataset used.
+    """
     config = get_config(config_path)
 
     # ### Setup ### #
